@@ -1,0 +1,45 @@
+{
+  "name": "github-visual-universe",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Open-source, read-only, personal GitHub intelligence and visualization platform.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0 <25",
+    "npm": ">=11.0.0"
+  },
+  "workspaces": [
+    "packages/shared",
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "build:shared": "npm run build -w @gvu/shared",
+    "build": "npm run build:shared && npm run build -w @gvu/api && npm run build -w @gvu/web",
+    "dev:api": "npm run build:shared && npm run dev -w @gvu/api",
+    "dev:web": "npm run build:shared && npm run dev -w @gvu/web",
+    "typecheck": "npm run build:shared && npm run typecheck --workspaces --if-present",
+    "test": "npm run build:shared && npm run test --workspaces --if-present",
+    "lint": "npm run build:shared && eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "licenses:check": "node scripts/check-licenses.mjs",
+    "audit:deps": "npm audit --audit-level=high",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build && npm run licenses:check"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.19.2",
+    "eslint": "10.13.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.13.0",
+    "prettier": "3.9.10",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "fsevents@2.3.3": true
+  }
+}
