@@ -3,9 +3,10 @@
 GitHub Visual Universe is designed to be **read-only** and to keep your repository data between your
 browser and GitHub. This document describes the security model and how to report problems.
 
-> **Current status:** the project is at foundation stage. **Authentication and GitHub data access
-> are not implemented, no GitHub App exists, and nothing is deployed.** The model below is the
-> agreed **design** (see [ADR 0001](./docs/adr/0001-auth-broker-and-direct-github-access.md)).
+> **Current status:** local development. **Sign-in and repository discovery are implemented and
+> tested against mocked GitHub responses, but have not yet been run against real GitHub, and nothing
+> is deployed.** Rate limiting on the broker is **not implemented and is required before any public
+> deployment.** The model below is the agreed **design** (see [ADR 0001](./docs/adr/0001-auth-broker-and-direct-github-access.md)).
 > Sections marked _(planned)_ are not yet in code. Where this document and the ADR differ, the ADR
 > takes precedence.
 
@@ -69,7 +70,9 @@ The boundary above only holds if these controls are built and kept. None of them
 
 - The broker must not log request bodies, codes, verifiers, tokens or `Authorization` headers; it
   must restrict `Origin` to an exact allow-list, validate `redirect_uri` against an allow-list, limit
-  body size, and apply rate limiting.
+  body size, and apply rate limiting. _Implemented: no sensitive logging, exact `Origin` and
+  `redirect_uri` allow-lists, a 4 KB body limit. **Not implemented: rate limiting. It is a required
+  task before public deployment.**_
 - OAuth `state` and the PKCE verifier must be random, single-use and short-lived.
 - The GitHub App setting **"Request user authorization (OAuth) during installation" must stay
   disabled**, because that path bypasses our `state` and PKCE checks. Device flow must stay off.
@@ -82,23 +85,24 @@ The boundary above only holds if these controls are built and kept. None of them
 
 - **Never commit secrets.** `.env` files are git-ignored; only `.env.example` files with
   placeholders are tracked.
-- The GitHub App **client secret** will live only in the Render environment, never in the repository
+- The GitHub App **client secret** lives only in the API's environment (a git-ignored `apps/api/.env`
+  locally, the Render environment in production), never in the repository
   or the frontend bundle. Only `VITE_`-prefixed variables reach the browser bundle, so nothing
   sensitive may use that prefix.
 - If a secret is ever exposed, rotate it immediately in the GitHub App settings and Render.
 
 ### Browser
 
-- The short-lived **access token only** is stored, in `sessionStorage` _(planned)_. The **refresh
+- The short-lived **access token only** is stored, in `sessionStorage`. The **refresh
   token is never stored in the browser** and is never returned to the frontend. Tokens must never
   appear in `localStorage`, URLs, logs or error reports.
 - **`sessionStorage` does not eliminate XSS risk.** Any script running on our origin can read the
   token. Memory-only storage would not remove that risk either, because injected script could read
   memory or start a new authorization. The token is read-only, expires after about 8 hours and is
   revoked on sign-out, which limits the damage but does not prevent theft.
-- **A strict Content Security Policy is a prerequisite for implementing authentication**, so it must
-  land **before** any sign-in code _(planned)_. GitHub Pages cannot set response headers, so it will
-  be a `<meta>` CSP, which cannot express every directive (for example `frame-ancestors`).
+- **A strict Content Security Policy is a prerequisite for authentication.** It is a `<meta>` CSP
+  because GitHub Pages cannot set response headers, so it cannot express every directive (for example
+  `frame-ancestors`). It is injected into the **built** site only; the dev server has none.
 - No third-party scripts or analytics.
 - Rendered repository content (READMEs, issue bodies) must be sanitized before any HTML rendering
   _(planned)_. Markdown and README content is never rendered as raw HTML.

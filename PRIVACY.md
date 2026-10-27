@@ -1,9 +1,9 @@
 # Privacy Statement
 
-_Status: this describes how the application is **designed** to work. **Sign-in and GitHub data
-access do not exist yet and nothing is deployed.** Today the app contains no authentication, has
-no GitHub App behind it, and collects no user data. Sections below that describe sign-in explain the
-**intended** behaviour so you can judge it before it is built._
+_Status: this describes how the application is **designed** to work. **Sign-in and a read-only
+repository list now exist for local development, but nothing is deployed and sign-in has not yet been
+run against real GitHub.** The app has no accounts and no database, and collects no user data. Sections
+below that describe sign-in explain the behaviour so you can judge it before it is deployed._
 
 GitHub Visual Universe is free, open-source software. It has no accounts of its own, no database and
 no advertising. It is read-only: it can look at your GitHub data but never change it.
@@ -62,8 +62,8 @@ reaches only what you yourself can access, and it is meant to be usable only by 
 
 No software can promise perfect security, and we want to be clear about the limits:
 
-- A sign-in token in a web page can be read by any script running on that page. We plan strict
-  protections against that (a Content Security Policy, no third-party scripts, careful handling of
+- A sign-in token in a web page can be read by any script running on that page. We use strict
+  protections against that (a Content Security Policy in the built site, no third-party scripts, careful handling of
   repository content). Keeping the token in `sessionStorage` reduces how long it exists, but it does
   **not** remove this risk. The token is read-only and short-lived to limit the damage.
 - The sign-in server handles credentials in transit, so a compromised server deployment could in

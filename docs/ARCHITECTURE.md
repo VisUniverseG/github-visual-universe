@@ -8,20 +8,20 @@ differ. `PRIVACY.md`, `SECURITY.md` and the Phase 0 assessment have been aligned
 
 ## Status
 
-| Component                          | Status                                                                  |
-| ---------------------------------- | ----------------------------------------------------------------------- |
-| npm workspaces monorepo            | ✅ Implemented                                                          |
-| `packages/shared` (contracts)      | ✅ Scaffold (`/health` schema only)                                     |
-| `apps/api` (Hono)                  | ✅ Scaffold (`GET /health`, CORS, headers)                              |
-| `apps/web` (React + Vite)          | ✅ Scaffold (status page calling `/health`)                             |
-| CI checks                          | ✅ Implemented (not yet run on GitHub)                                  |
-| Authentication design              | ✅ Decided (ADR 0001, amended after Phase 2). **No auth code exists.**  |
-| GitHub authorization spike harness | ✅ Prepared, offline-tested. **Not yet run against a real GitHub App.** |
-| GitHub App registration            | ⏳ Not created (Phase 3, done by the organization owner)                |
-| Auth broker + sign-in (PKCE)       | ⏳ Planned (Phase 3)                                                    |
-| GitHub data layer (read-only)      | ⏳ Planned (Phase 4)                                                    |
-| Visualizations                     | ⏳ Planned (Phases 5–10)                                                |
-| Deployment (Pages + Render)        | ⏳ Planned (Phase 11)                                                   |
+| Component                          | Status                                                                        |
+| ---------------------------------- | ----------------------------------------------------------------------------- |
+| npm workspaces monorepo            | ✅ Implemented                                                                |
+| `packages/shared` (contracts)      | ✅ `/health`, auth-broker and GitHub response schemas (Zod)                   |
+| `apps/api` (Hono)                  | ✅ `GET /health`, `POST /auth/token`, `POST /auth/revoke`                     |
+| `apps/web` (React + Vite)          | ✅ Sign-in (PKCE), repository list, Disconnect; build-time CSP                |
+| CI checks                          | ✅ Implemented (not yet run on GitHub)                                        |
+| Authentication design              | ✅ Decided (ADR 0001, amended after Phase 2)                                  |
+| GitHub authorization spike harness | ✅ Prepared, offline-tested. **Not yet run against a real GitHub App.**       |
+| GitHub App registration            | ✅ Created and installed. Credentials are configured locally only.            |
+| Auth broker + sign-in (PKCE)       | ✅ Implemented and tested against mocks. **Not yet run against real GitHub.** |
+| GitHub data layer (read-only)      | 🟡 Repository discovery only (installation endpoints); the rest is Phase 4    |
+| Visualizations                     | ⏳ Planned (Phases 5–10)                                                      |
+| Deployment (Pages + Render)        | ⏳ Planned (Phase 11)                                                         |
 
 ## Repository layout
 
@@ -191,7 +191,15 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
   Render), `ALLOWED_ORIGINS`. Graceful shutdown on `SIGTERM`/`SIGINT`. The commented
   `GITHUB_APP_CLIENT_ID` / `GITHUB_APP_CLIENT_SECRET` entries in `.env.example` are placeholders only.
 - Dev: `tsx watch`; production: `tsc` → `node dist/index.js`.
-- **No authentication code exists.** The broker endpoints described above are not implemented.
+- **Auth broker (Phase 3).** `POST /auth/token` exchanges the code (plus PKCE verifier) and returns
+  only `{ access_token, expires_in }`; the refresh token is discarded. `POST /auth/revoke` asks GitHub
+  to revoke a token and answers `{ revoked: true }` **only if GitHub itself confirmed it (HTTP 204)**;
+  any other outcome is a 502 `revocation_not_confirmed`. Both require an allow-listed `Origin`, a JSON
+  content type and a body of at most 4 KB, and validate input with the shared schemas. The
+  `redirect_uri` must exactly equal an entry of `ALLOWED_REDIRECT_URIS` (no normalization, no
+  wildcards). The API starts without `GITHUB_APP_CLIENT_ID` / `GITHUB_APP_CLIENT_SECRET`; `/auth/*`
+  then answers a generic 503. Logs contain only fixed reason strings, never request or response
+  content. There is no database and nothing is stored.
 
 ### `apps/web`
 
@@ -201,6 +209,20 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
 - `VITE_API_BASE_URL` selects the API; `VITE_BASE_PATH` sets Vite's `base` (`/` locally,
   `/github-visual-universe/` for GitHub Pages).
 - Only `VITE_`-prefixed variables reach the bundle. No secrets belong in the web app.
+- **Sign-in (Phase 3).** "Connect GitHub" stores a random `state` and PKCE verifier in
+  `sessionStorage`, wakes the API, then redirects to GitHub with an S256 challenge. At the exact
+  configured callback URI (`VITE_AUTH_REDIRECT_URI`) the page reads `code`/`state`, **replaces the URL
+  immediately**, validates `state` (single-use, 10-minute TTL) **before** sending the code to the
+  broker, and stores the returned access token in `sessionStorage` (never `localStorage`; no refresh
+  token). Repositories come from `GET /user/installations` and
+  `GET /user/installations/{id}/repositories` (read-only GETs to `api.github.com` with the user's own
+  token; GitHub returns the user ∩ app intersection). A 401 ends the session.
+- **Disconnect** has two separately reported halves: the browser session is cleared immediately, and
+  GitHub revocation is requested through the broker and reported as done **only if GitHub confirmed
+  it**.
+- A strict `<meta>` CSP (`connect-src` limited to our API and `api.github.com`) and a `no-referrer`
+  policy are injected into the **built** `index.html` only; the dev server has none, because a meta
+  CSP would break hot reload.
 
 ### Spike harness (`scripts/spikes/github-auth`)
 
@@ -222,11 +244,18 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
 
 ## Known gaps
 
-- **No CSP yet, and one is now a hard prerequisite for sign-in.** GitHub Pages cannot set response
-  headers, so a `<meta>` CSP (and any dev-server adjustments) must land **before** the auth code,
-  not with it. A `<meta>` CSP cannot express every directive (for example `frame-ancestors`).
-- The API's CORS currently advertises only `GET`/`OPTIONS`. The broker needs `POST` and a
-  `Content-Type` preflight, with the exact-origin rule kept.
+- **CSP is build-only.** The `<meta>` CSP is injected into the built site; `npm run dev` runs without
+  one, so check CSP behaviour with `vite preview`. A `<meta>` CSP cannot express every directive
+  (for example `frame-ancestors`).
+- **Rate limiting is NOT implemented and is a required security task before any public deployment.**
+  `/auth/token` and `/auth/revoke` currently have no per-client limits. It was deferred only because
+  this milestone runs locally.
+- GitHub Pages serves static files, so the production callback
+  (`.../github-visual-universe/auth/callback/`) needs a real `auth/callback/index.html` (or a
+  `404.html` fallback) before deployment. This is deployment work that has not been done.
+- Sign-in and repository discovery have only been exercised against mocks. Real-GitHub behaviour
+  (token response shape, browser CORS on `api.github.com`, `Link` header exposure, revoke) is
+  unverified until the first real sign-in.
 - No `404.html`/router fallback yet (decision pending: `HashRouter` vs. fallback, spike item 10).
   The auth callback paths depend on this decision.
 - No deploy workflows, `render.yaml`, Dependabot config, or issue/PR templates.
