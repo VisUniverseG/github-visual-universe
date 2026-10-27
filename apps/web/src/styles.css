@@ -580,3 +580,181 @@ a {
 .empty button {
   margin-top: 0.25rem;
 }
+
+/* ---------- Architecture view (Phase 5) ---------- */
+[hidden] {
+  display: none !important;
+}
+
+.architecture {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.architecture-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+}
+
+.architecture-head h2 {
+  font-size: 1.15rem;
+  overflow-wrap: anywhere;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.link-button:hover:not(:disabled) {
+  border: 0;
+  text-decoration-thickness: 2px;
+}
+
+.metric {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 1rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 0.88rem;
+}
+
+.metric legend {
+  float: left;
+  margin-right: 0.75rem;
+  padding: 0;
+  color: var(--muted);
+}
+
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0.75rem 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.9rem;
+}
+
+.crumbs li + li::before {
+  content: '/';
+  margin-right: 0.25rem;
+  color: var(--muted);
+}
+
+.crumbs [aria-current='page'] {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.treemap-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.tile-rect {
+  stroke: var(--surface);
+  stroke-width: 3;
+}
+
+.tile-dir .tile-rect {
+  fill: var(--accent);
+  fill-opacity: 0.85;
+}
+
+.tile-file .tile-rect {
+  fill: var(--ok);
+  fill-opacity: 0.8;
+}
+
+.tile-rest .tile-rect {
+  fill: var(--muted);
+  fill-opacity: 0.6;
+}
+
+.tile-dir {
+  cursor: pointer;
+}
+
+.tile-dir:hover .tile-rect {
+  fill-opacity: 1;
+}
+
+.tile-label,
+.tile-detail {
+  fill: var(--accent-contrast);
+  pointer-events: none;
+}
+
+.tile-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tile-detail {
+  font-size: 11px;
+  opacity: 0.9;
+}
+
+.contents-heading {
+  margin: 1rem 0 0.5rem;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.entries {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.entries th,
+.entries td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.entries thead th {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.entries .entry-name {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.entries .num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+@media (max-width: 40rem) {
+  .entries thead th:nth-child(2),
+  .entries td:nth-child(2) {
+    display: none;
+  }
+}

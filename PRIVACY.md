@@ -1,8 +1,8 @@
 # Privacy Statement
 
-_Status: this describes how the application is **designed** to work. **Sign-in and a read-only
-repository list now exist for local development, but nothing is deployed and sign-in has not yet been
-run against real GitHub.** The app has no accounts and no database, and collects no user data. Sections
+_Status: this describes how the application is **designed** to work. **Sign-in, a read-only
+repository overview and a repository architecture (file tree) view now exist for local development
+and have been manually verified against real GitHub by the maintainer; nothing is deployed.** The app has no accounts and no database, and collects no user data. Sections
 below that describe sign-in explain the behaviour so you can judge it before it is deployed._
 
 GitHub Visual Universe is free, open-source software. It has no accounts of its own, no database and
@@ -17,6 +17,11 @@ no advertising. It is read-only: it can look at your GitHub data but never chang
 | Your GitHub refresh token             | GitHub → our broker, which **discards it**. It is never sent to your browser and never stored             | **No**                                                                       |
 | Your repositories, commits, issues, … | Fetched **directly from GitHub to your browser** using your token                                         | Our server is not involved, by design                                        |
 | Cached GitHub responses               | Your browser's local storage (IndexedDB), per user _(planned)_                                            | Only on your device; cleared on sign-out                                     |
+
+**File names in the architecture view.** When you open a repository's architecture view, your
+browser reads that repository's **file and folder names and sizes** directly from GitHub, using your
+token. It does not read file contents. The listing is kept in memory only while the view is open and
+is dropped when you go back; it is not cached, stored or sent to our server.
 
 ## What the backend sees
 

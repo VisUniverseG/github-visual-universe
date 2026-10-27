@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  githubBranchSchema,
+  githubDefaultBranchSchema,
   githubRepositorySchema,
   githubUserSchema,
+  parseGitTree,
   parseInstallationRepositories,
 } from './index.js';
 
@@ -94,5 +97,109 @@ describe('githubUserSchema', () => {
   it('reads only the login', () => {
     const parsed = githubUserSchema.parse({ login: 'octo', email: 'private@example.com', id: 1 });
     expect(parsed).toEqual({ login: 'octo' });
+  });
+});
+
+const SHA = 'a'.repeat(40);
+const SHA_256 = 'b'.repeat(64);
+
+describe('githubBranchSchema / githubDefaultBranchSchema', () => {
+  it('reads the head commit and its tree, ignoring everything else', () => {
+    const parsed = githubBranchSchema.parse({
+      name: 'main',
+      protected: true,
+      commit: {
+        sha: SHA,
+        author: { login: 'x' },
+        commit: { tree: { sha: SHA_256 }, message: 'm' },
+      },
+    });
+    expect(parsed).toEqual({ commit: { sha: SHA, commit: { tree: { sha: SHA_256 } } } });
+  });
+
+  it.each([
+    ['a missing tree', { commit: { sha: SHA, commit: {} } }],
+    ['a non-hex SHA', { commit: { sha: 'zz', commit: { tree: { sha: SHA } } } }],
+    ['a path-like SHA', { commit: { sha: SHA, commit: { tree: { sha: '../../user' } } } }],
+  ])('rejects %s', (_name, body) => {
+    expect(githubBranchSchema.safeParse(body).success).toBe(false);
+  });
+
+  it('needs a non-empty default branch', () => {
+    expect(githubDefaultBranchSchema.parse({ default_branch: 'main', id: 1 })).toEqual({
+      default_branch: 'main',
+    });
+    expect(githubDefaultBranchSchema.safeParse({ default_branch: '' }).success).toBe(false);
+    expect(githubDefaultBranchSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe('parseGitTree', () => {
+  const entry = (path: string, type: string, extra: Record<string, unknown> = {}) => ({
+    path,
+    mode: '100644',
+    type,
+    sha: SHA,
+    url: 'https://api.github.com/ignored',
+    ...extra,
+  });
+
+  it('reads entries, the truncated flag and the tree SHA', () => {
+    const result = parseGitTree({
+      sha: SHA,
+      truncated: false,
+      tree: [entry('src', 'tree', { mode: '040000' }), entry('src/a.ts', 'blob', { size: 12 })],
+    });
+    expect(result.sha).toBe(SHA);
+    expect(result.truncated).toBe(false);
+    expect(result.skipped).toBe(0);
+    expect(result.entries.map((e) => [e.path, e.type, e.size])).toEqual([
+      ['src', 'tree', undefined],
+      ['src/a.ts', 'blob', 12],
+    ]);
+    expect(JSON.stringify(result)).not.toContain('ignored');
+  });
+
+  it('keeps entries whose optional fields are missing or malformed', () => {
+    const result = parseGitTree({
+      sha: SHA,
+      truncated: false,
+      tree: [{ path: 'a', type: 'blob', size: 'big', mode: 7 }],
+    });
+    expect(result.skipped).toBe(0);
+    expect(result.entries[0]).toMatchObject({ path: 'a', type: 'blob' });
+    expect(result.entries[0]?.size).toBeUndefined();
+    expect(result.entries[0]?.mode).toBeUndefined();
+  });
+
+  it('counts entries it cannot read instead of dropping them silently', () => {
+    const result = parseGitTree({
+      sha: SHA,
+      truncated: false,
+      tree: [
+        entry('ok', 'blob'),
+        entry('weird', 'something-new'),
+        { type: 'blob' },
+        entry('', 'blob'),
+        entry('x'.repeat(5000), 'blob'),
+        'not an object',
+      ],
+    });
+    expect(result.entries.map((e) => e.path)).toEqual(['ok']);
+    expect(result.skipped).toBe(5);
+  });
+
+  it('reports a truncated listing', () => {
+    expect(parseGitTree({ sha: SHA, truncated: true, tree: [] }).truncated).toBe(true);
+  });
+
+  it.each([
+    ['no truncated flag', { sha: SHA, tree: [] }],
+    ['a non-boolean truncated flag', { sha: SHA, truncated: 'no', tree: [] }],
+    ['no tree array', { sha: SHA, truncated: false }],
+    ['a bad tree SHA', { sha: 'nope', truncated: false, tree: [] }],
+    ['a non-object', 'tree'],
+  ])('rejects an envelope with %s', (_name, body) => {
+    expect(() => parseGitTree(body)).toThrow();
   });
 });

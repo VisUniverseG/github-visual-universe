@@ -3,10 +3,10 @@
 An open-source, personal GitHub intelligence platform for visually exploring repositories, code architecture, Git history, dependencies, and developer insights.
 
 > **Status: early development.** The repository contains the monorepo, CI checks, design documents,
-> a local, read-only GitHub sign-in, and a Repository Overview dashboard (statistics, a language
-> chart, search, filters and a detail panel) built from your real accessible repositories. Deeper
-> visualizations (architecture, commits, pull requests, issues, workflows) are **not implemented
-> yet**, and nothing is deployed.
+> a local, read-only GitHub sign-in, a Repository Overview dashboard (statistics, a language
+> chart, search, filters and a detail panel) built from your real accessible repositories, and a
+> repository Architecture view (a file-tree treemap with folder navigation). Deeper visualizations
+> (commits, pull requests, issues, workflows) are **not implemented yet**, and nothing is deployed.
 
 ## Vision
 

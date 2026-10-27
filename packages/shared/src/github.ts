@@ -103,3 +103,73 @@ export function parseInstallationRepositories(json: unknown): {
   }
   return { repositories, skipped };
 }
+
+// ---------------------------------------------------------------------------------------------
+// Repository architecture (Phase 5): default branch, branch head and Git tree.
+// ---------------------------------------------------------------------------------------------
+
+/** A Git object id: 40 hex characters (SHA-1) or 64 (SHA-256 repositories). */
+export const gitShaSchema = z.string().regex(/^([0-9a-f]{40}|[0-9a-f]{64})$/);
+
+/** `GET /repos/{owner}/{repo}`: only the default branch is read. */
+export const githubDefaultBranchSchema = z.object({
+  default_branch: z.string().min(1),
+});
+export type GitHubDefaultBranch = z.infer<typeof githubDefaultBranchSchema>;
+
+/** `GET /repos/{owner}/{repo}/branches/{branch}`: the head commit and its tree. */
+export const githubBranchSchema = z.object({
+  commit: z.object({
+    sha: gitShaSchema,
+    commit: z.object({
+      tree: z.object({ sha: gitShaSchema }),
+    }),
+  }),
+});
+export type GitHubBranch = z.infer<typeof githubBranchSchema>;
+
+/**
+ * One entry of a Git tree. `blob` is a file (or a symlink, mode `120000`), `tree` a directory and
+ * `commit` a submodule. Only blobs carry a `size`.
+ */
+export const githubTreeEntrySchema = z.object({
+  path: z.string().min(1).max(4096),
+  mode: lenient(z.string()),
+  type: z.enum(['blob', 'tree', 'commit']),
+  sha: lenient(z.string()),
+  size: lenient(z.number().int().nonnegative()),
+});
+export type GitHubTreeEntry = z.infer<typeof githubTreeEntrySchema>;
+
+const gitTreeEnvelopeSchema = z.object({
+  sha: gitShaSchema,
+  // Required on purpose: without it we could not tell a complete tree from a cut-off one.
+  truncated: z.boolean(),
+  tree: z.array(z.unknown()),
+});
+
+export interface ParsedGitTree {
+  readonly sha: string;
+  /** GitHub cut the listing off (more than 100,000 entries or 7 MB): the entries are incomplete. */
+  readonly truncated: boolean;
+  readonly entries: GitHubTreeEntry[];
+  /** Entries that could not be read (unknown type, bad path…) and were left out. */
+  readonly skipped: number;
+}
+
+/**
+ * Parses `GET /repos/{owner}/{repo}/git/trees/{sha}` one entry at a time, so a single unreadable
+ * entry does not discard the rest. Callers must surface `skipped` and `truncated`: either one means
+ * the listing is not the whole repository. Throws if the envelope itself is not a Git tree.
+ */
+export function parseGitTree(json: unknown): ParsedGitTree {
+  const envelope = gitTreeEnvelopeSchema.parse(json);
+  const entries: GitHubTreeEntry[] = [];
+  let skipped = 0;
+  for (const raw of envelope.tree) {
+    const parsed = githubTreeEntrySchema.safeParse(raw);
+    if (parsed.success) entries.push(parsed.data);
+    else skipped += 1;
+  }
+  return { sha: envelope.sha, truncated: envelope.truncated, entries, skipped };
+}
