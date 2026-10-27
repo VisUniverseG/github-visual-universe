@@ -1,7 +1,6 @@
 import {
-  githubInstallationRepositoriesResponseSchema,
   githubInstallationsResponseSchema,
-  type GitHubInstallationRepositoriesResponse,
+  parseInstallationRepositories,
   type GitHubInstallationsResponse,
   type GitHubRepository,
 } from '@gvu/shared';
@@ -20,6 +19,12 @@ const MAX_INSTALLATION_PAGES = 10;
 /** Guards against an endless loop of empty pages. */
 const MAX_EMPTY_HOPS = 50;
 
+export type Visibility = 'public' | 'private' | 'internal';
+
+/**
+ * A repository as the UI sees it. Only the first group is guaranteed; every other field is
+ * `null` (or empty) when GitHub did not send a usable value, and the UI shows nothing for it.
+ */
 export interface RepositoryItem {
   readonly id: number;
   readonly name: string;
@@ -29,6 +34,23 @@ export interface RepositoryItem {
   readonly description: string | null;
   /** A validated https://github.com link, or `null` if GitHub sent anything else. */
   readonly url: string | null;
+
+  /** `"User"`, `"Organization"` or whatever GitHub sent; `null` if absent. */
+  readonly ownerType: string | null;
+  readonly visibility: Visibility;
+  /** GitHub's primary language; `null` when none was detected or reported. */
+  readonly language: string | null;
+  readonly stars: number | null;
+  readonly forks: number | null;
+  /** GitHub counts open pull requests in this number. */
+  readonly openIssues: number | null;
+  /** ISO timestamps, validated; `null` if absent or unparseable. */
+  readonly updatedAt: string | null;
+  readonly pushedAt: string | null;
+  readonly isFork: boolean | null;
+  readonly isArchived: boolean | null;
+  readonly defaultBranch: string | null;
+  readonly topics: readonly string[];
 }
 
 /** Opaque position in the list: which installations remain and where the current one stands. */
@@ -39,6 +61,8 @@ export interface RepositoryCursor {
 
 export interface RepositoryPage {
   readonly items: readonly RepositoryItem[];
+  /** Entries in GitHub's response that could not be read and were left out. */
+  readonly skipped: number;
   /** `null` when there is nothing more to load. */
   readonly cursor: RepositoryCursor | null;
 }
@@ -54,6 +78,16 @@ export function safeGitHubHtmlUrl(value: string): string | null {
   }
 }
 
+function validIsoDate(value: string | null | undefined): string | null {
+  return value && !Number.isNaN(Date.parse(value)) ? value : null;
+}
+
+function toVisibility(repo: GitHubRepository): Visibility {
+  if (repo.visibility === 'internal') return 'internal';
+  // `private` is required and authoritative; `visibility` only adds the "internal" case.
+  return repo.private ? 'private' : 'public';
+}
+
 export function toRepositoryItem(repo: GitHubRepository): RepositoryItem {
   return {
     id: repo.id,
@@ -63,6 +97,18 @@ export function toRepositoryItem(repo: GitHubRepository): RepositoryItem {
     isPrivate: repo.private,
     description: repo.description ?? null,
     url: safeGitHubHtmlUrl(repo.html_url),
+    ownerType: repo.owner.type ?? null,
+    visibility: toVisibility(repo),
+    language: repo.language?.trim() ? repo.language : null,
+    stars: repo.stargazers_count ?? null,
+    forks: repo.forks_count ?? null,
+    openIssues: repo.open_issues_count ?? null,
+    updatedAt: validIsoDate(repo.updated_at),
+    pushedAt: validIsoDate(repo.pushed_at),
+    isFork: repo.fork ?? null,
+    isArchived: repo.archived ?? null,
+    defaultBranch: repo.default_branch ?? null,
+    topics: repo.topics ?? [],
   };
 }
 
@@ -97,15 +143,16 @@ export async function loadRepositoryPage(
     nextUrl: null,
   };
 
+  let skipped = 0;
   for (let hop = 0; hop < MAX_EMPTY_HOPS; hop += 1) {
     const [current, ...rest] = position.remainingInstallations;
-    if (current === undefined) return { items: [], cursor: null };
+    if (current === undefined) return { items: [], skipped, cursor: null };
 
-    const result: GitHubPage<GitHubInstallationRepositoriesResponse> = await githubGet(
+    const result: GitHubPage<ReturnType<typeof parseInstallationRepositories>> = await githubGet(
       position.nextUrl ??
         `/user/installations/${String(current)}/repositories?per_page=${String(PAGE_SIZE)}`,
       token,
-      (json) => githubInstallationRepositoriesResponseSchema.parse(json),
+      (json) => parseInstallationRepositories(json),
       signal,
     );
 
@@ -115,9 +162,12 @@ export async function loadRepositoryPage(
 
     const items = result.data.repositories.map(toRepositoryItem);
     const finished = position.nextUrl === null && position.remainingInstallations.length === 0;
-    if (items.length > 0 || finished) {
-      return { items, cursor: finished ? null : position };
+    skipped += result.data.skipped;
+    if (items.length > 0 || skipped > 0 || finished) {
+      return { items, skipped, cursor: finished ? null : position };
     }
   }
-  return { items: [], cursor: null };
+  // The hop limit was reached with installations still unread. Hand back the current position
+  // (never `null`, which would mean "finished") so the caller can show partial progress and resume.
+  return { items: [], skipped, cursor: position };
 }

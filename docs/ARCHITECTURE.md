@@ -8,20 +8,20 @@ differ. `PRIVACY.md`, `SECURITY.md` and the Phase 0 assessment have been aligned
 
 ## Status
 
-| Component                          | Status                                                                        |
-| ---------------------------------- | ----------------------------------------------------------------------------- |
-| npm workspaces monorepo            | ✅ Implemented                                                                |
-| `packages/shared` (contracts)      | ✅ `/health`, auth-broker and GitHub response schemas (Zod)                   |
-| `apps/api` (Hono)                  | ✅ `GET /health`, `POST /auth/token`, `POST /auth/revoke`                     |
-| `apps/web` (React + Vite)          | ✅ Sign-in (PKCE), repository list, Disconnect; build-time CSP                |
-| CI checks                          | ✅ Implemented (not yet run on GitHub)                                        |
-| Authentication design              | ✅ Decided (ADR 0001, amended after Phase 2)                                  |
-| GitHub authorization spike harness | ✅ Prepared, offline-tested. **Not yet run against a real GitHub App.**       |
-| GitHub App registration            | ✅ Created and installed. Credentials are configured locally only.            |
-| Auth broker + sign-in (PKCE)       | ✅ Implemented and tested against mocks. **Not yet run against real GitHub.** |
-| GitHub data layer (read-only)      | 🟡 Repository discovery only (installation endpoints); the rest is Phase 4    |
-| Visualizations                     | ⏳ Planned (Phases 5–10)                                                      |
-| Deployment (Pages + Render)        | ⏳ Planned (Phase 11)                                                         |
+| Component                          | Status                                                                               |
+| ---------------------------------- | ------------------------------------------------------------------------------------ |
+| npm workspaces monorepo            | ✅ Implemented                                                                       |
+| `packages/shared` (contracts)      | ✅ `/health`, auth-broker and GitHub response schemas (Zod, lenient optional fields) |
+| `apps/api` (Hono)                  | ✅ `GET /health`, `POST /auth/token`, `POST /auth/revoke`                            |
+| `apps/web` (React + Vite)          | ✅ Sign-in (PKCE), Repository Overview dashboard, Disconnect; build-time CSP         |
+| CI checks                          | ✅ Implemented (not yet run on GitHub)                                               |
+| Authentication design              | ✅ Decided (ADR 0001, amended after Phase 2)                                         |
+| GitHub authorization spike harness | ✅ Prepared, offline-tested. **Not yet run against a real GitHub App.**              |
+| GitHub App registration            | ✅ Created and installed. Credentials are configured locally only.                   |
+| Auth broker + sign-in (PKCE)       | ✅ Implemented; manually verified against real GitHub. Automated tests use mocks.    |
+| GitHub data layer (read-only)      | 🟡 Repository discovery + `GET /user` (Phase 4 dashboard); per-repo data is later    |
+| Visualizations                     | 🟡 Repository overview + language chart done; the rest planned (Phases 5–10)         |
+| Deployment (Pages + Render)        | ⏳ Planned (Phase 11)                                                                |
 
 ## Repository layout
 
@@ -217,6 +217,34 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
   token). Repositories come from `GET /user/installations` and
   `GET /user/installations/{id}/repositories` (read-only GETs to `api.github.com` with the user's own
   token; GitHub returns the user ∩ app intersection). A 401 ends the session.
+- **Repository Overview dashboard (Phase 4).** All repository data comes from the same read-only
+  requests as sign-in discovery, plus one `GET /user` for the signed-in login. No other requests,
+  permissions or write operations were added.
+  - _Data:_ the installation endpoints already return full repository objects. The shared schema now
+    also keeps `language`, `stargazers_count`, `forks_count`, `open_issues_count`, `updated_at`,
+    `pushed_at`, `visibility`, `fork`, `archived`, `default_branch`, `topics` and `owner.type`.
+    Every one of them is **optional**: a missing or malformed value becomes "absent" (shown as
+    nothing, never as `0` or "unknown"), and a repository entry that cannot be read at all is
+    skipped and **counted**, so one bad entry cannot hide the rest or silently shrink the totals.
+  - _Complete dataset:_ all pages and installations are loaded automatically, up to a safety cap of
+    **30 repository pages (3,000 repositories) per batch**. Statistics and the language chart are
+    labelled **Complete** only when every page loaded and every entry was readable; otherwise they
+    are labelled **Partial** (still loading, cap reached with a "Load more" button, a request
+    failed part-way with "Try again", or entries were unreadable), each with its own message.
+  - _Personal vs organization:_ "personal" means `owner.login` equals the login from `GET /user`.
+    Organization comes from `owner.type`. A repository owned by another user (for example one you
+    collaborate on) is counted as "Other accounts", and one whose owner type is missing is reported
+    as undeterminable. If `GET /user` fails, personal figures and the Personal filter are hidden
+    or disabled with an explanation and a retry.
+  - _Language chart:_ repositories counted by GitHub's single primary `language`. It is a count of
+    repositories, **not bytes or lines of code**. Byte counts would need one extra request per
+    repository (`GET /repos/{owner}/{repo}/languages`) and were deliberately not added.
+    Repositories without a detected language form a "No language detected" row. Bars are SVG
+    attributes (no inline `style`, which the CSP forbids) and no chart library is used.
+  - _Search, filters, sort:_ name search, visibility, owner, language and sort (name, or recently
+    updated by `updated_at`) all combine (AND). Statistics always describe the whole loaded dataset,
+    not the filtered view. "Last pushed" (`pushed_at`) appears in the detail panel only.
+  - _Selection:_ choosing a card opens a detail panel with only fields the list already returned.
 - **Disconnect** has two separately reported halves: the browser session is cleared immediately, and
   GitHub revocation is requested through the broker and reported as done **only if GitHub confirmed
   it**.
@@ -253,9 +281,14 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
 - GitHub Pages serves static files, so the production callback
   (`.../github-visual-universe/auth/callback/`) needs a real `auth/callback/index.html` (or a
   `404.html` fallback) before deployment. This is deployment work that has not been done.
-- Sign-in and repository discovery have only been exercised against mocks. Real-GitHub behaviour
-  (token response shape, browser CORS on `api.github.com`, `Link` header exposure, revoke) is
-  unverified until the first real sign-in.
+- Sign-in and repository discovery have been run by the maintainer against real GitHub (personal,
+  private and organization repositories were listed). Automated tests still use mocks only. Not yet
+  verified live: the dashboard's extra repository fields (read from GitHub's documented response),
+  `GET /user`, and token revocation.
+- **Dashboard limits:** language is a repository count by primary language, not bytes. Architecture,
+  branches, commits, pull requests, issues and workflows have no views yet. The 30-page cap means an
+  account with more than about 3,000 accessible repositories shows partial statistics until
+  "Load more" is used. The installation list itself is capped at 10 pages.
 - No `404.html`/router fallback yet (decision pending: `HashRouter` vs. fallback, spike item 10).
   The auth callback paths depend on this decision.
 - No deploy workflows, `render.yaml`, Dependabot config, or issue/PR templates.

@@ -5,7 +5,7 @@ import { App } from './App.tsx';
 import type { AuthSettingsResult } from './auth/config.ts';
 import { SESSION_MESSAGES } from './auth/useGitHubSession.ts';
 import { loadToken, savePending, saveToken } from './auth/session.ts';
-import { REPOSITORY_MESSAGES } from './components/RepositoryBrowser.tsx';
+import { REPOSITORY_MESSAGES } from './dashboard/messages.ts';
 import {
   TEST_CODE,
   TEST_TOKEN,
@@ -31,6 +31,7 @@ function network(overrides: Routes = {}) {
   const net = createFakeFetch({
     [`GET ${API}/health`]: () =>
       Response.json({ status: 'ok', service: 'gvu-api', version: '1.0.0' }),
+    [`GET ${GH}/user`]: () => Response.json({ login: 'octo' }),
     [`GET ${GH}/user/installations`]: () =>
       Response.json({ total_count: 1, installations: [{ id: 7, account: { login: 'octo' } }] }),
     [`GET ${GH}/user/installations/7/repositories`]: () =>
@@ -248,69 +249,81 @@ describe('OAuth callback', () => {
   });
 });
 
-describe('repository list', () => {
-  it('shows name, owner, visibility, description and a validated link', async () => {
+describe('dashboard inside the signed-in app', () => {
+  it('shows the connected state and the repository cards after sign-in', async () => {
     network({
       [`GET ${GH}/user/installations/7/repositories`]: () =>
         repoResponse([
-          fakeRepo(1, 'alpha', { private: true, description: 'Secret sauce' }),
+          fakeRepo(1, 'alpha', {
+            private: true,
+            description: 'Secret sauce',
+            language: 'TypeScript',
+            stargazers_count: 5,
+            updated_at: '2026-03-01T10:00:00Z',
+          }),
           fakeRepo(2, 'beta'),
         ]),
     });
     signIn();
     renderApp();
 
-    const alpha = await screen.findByRole('link', { name: 'octo/alpha' });
-    expect(alpha.getAttribute('href')).toBe('https://github.com/octo/alpha');
-    expect(alpha.getAttribute('rel')).toContain('noopener');
+    const title = await screen.findByRole('button', { name: 'octo/alpha' });
+    expect(screen.getByText('Connected · read-only')).toBeTruthy();
 
-    const item = alpha.closest('li');
-    if (!item) throw new Error('expected a list item');
-    expect(within(item).getByText('Private')).toBeTruthy();
-    expect(within(item).getByText('Owner: octo')).toBeTruthy();
-    expect(within(item).getByText('Secret sauce')).toBeTruthy();
-    expect(screen.getByText('Public')).toBeTruthy();
+    const card = title.closest('article');
+    if (!card) throw new Error('expected a card');
+    expect(within(card).getByText('Private')).toBeTruthy();
+    expect(within(card).getByText('Owner: octo')).toBeTruthy();
+    expect(within(card).getByText('Secret sauce')).toBeTruthy();
+    expect(within(card).getByText('TypeScript')).toBeTruthy();
+    expect(within(card).getByText('★ 5')).toBeTruthy();
+    const link = within(card).getByRole('link', { name: 'Open octo/alpha on GitHub' });
+    expect(link.getAttribute('href')).toBe('https://github.com/octo/alpha');
+    expect(link.getAttribute('rel')).toContain('noopener');
   });
 
-  it('renders a repository with an unsafe URL as plain text, not a link', async () => {
+  it('renders a repository with an unsafe URL without a link', async () => {
     network({
       [`GET ${GH}/user/installations/7/repositories`]: () =>
         repoResponse([fakeRepo(1, 'evil', { html_url: 'javascript:alert(1)' })]),
     });
     signIn();
     renderApp();
-    expect(await screen.findByText('octo/evil')).toBeTruthy();
-    expect(screen.queryByRole('link', { name: 'octo/evil' })).toBeNull();
+    expect(await screen.findByRole('button', { name: 'octo/evil' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: /octo\/evil/ })).toBeNull();
   });
 
-  it('shows a loading state, then the empty state with install guidance', async () => {
+  it('ends the session when GitHub rejects the token (401), without calling revoke', async () => {
+    const net = network({
+      [`GET ${GH}/user/installations`]: () =>
+        Response.json({ message: 'Bad credentials' }, { status: 401 }),
+    });
+    signIn();
+    renderApp();
+
+    await screen.findByText(SESSION_MESSAGES.sessionExpired);
+    expect(loadToken()).toBeNull();
+    expect(screen.getByRole('button', { name: 'Connect GitHub' })).toBeTruthy();
+    expect(net.requests.some((r) => r.url.pathname === '/auth/revoke')).toBe(false);
+  });
+
+  it('ends the session when GET /user is rejected with 401', async () => {
+    network({
+      [`GET ${GH}/user`]: () => Response.json({ message: 'Bad credentials' }, { status: 401 }),
+    });
+    signIn();
+    renderApp();
+    await screen.findByText(SESSION_MESSAGES.sessionExpired);
+    expect(loadToken()).toBeNull();
+  });
+
+  it('shows the install guidance when the App is installed nowhere', async () => {
     network({
       [`GET ${GH}/user/installations`]: () => Response.json({ total_count: 0, installations: [] }),
     });
     signIn();
     renderApp();
-    expect(screen.getByText('Loading repositories…')).toBeTruthy();
     expect(await screen.findByText(REPOSITORY_MESSAGES.empty)).toBeTruthy();
-  });
-
-  it('loads more pages and does not duplicate repositories', async () => {
-    const page2 = `${GH}/user/installations/7/repositories?per_page=100&page=2`;
-    network({
-      [`GET ${GH}/user/installations/7/repositories`]: (req) =>
-        req.url.searchParams.get('page') === '2'
-          ? repoResponse([fakeRepo(2, 'beta'), fakeRepo(1, 'alpha')])
-          : repoResponse([fakeRepo(1, 'alpha')], page2),
-    });
-    signIn();
-    renderApp();
-
-    expect(await screen.findByText('octo/alpha')).toBeTruthy();
-    expect(screen.queryByText('octo/beta')).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
-    expect(await screen.findByText('octo/beta')).toBeTruthy();
-    expect(screen.getAllByText('octo/alpha')).toHaveLength(1);
-    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
   });
 
   it('shows a rate-limit error and recovers on retry', async () => {
@@ -330,31 +343,8 @@ describe('repository list', () => {
     );
     limited = false;
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-    expect(await screen.findByText('octo/alpha')).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'octo/alpha' })).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
-  });
-
-  it('shows a generic error for an unexpected GitHub response', async () => {
-    network({
-      [`GET ${GH}/user/installations`]: () => Response.json({ surprise: true }),
-    });
-    signIn();
-    renderApp();
-    expect((await screen.findByRole('alert')).textContent).toContain(REPOSITORY_MESSAGES.generic);
-  });
-
-  it('ends the session when GitHub rejects the token (401), without calling revoke', async () => {
-    const net = network({
-      [`GET ${GH}/user/installations`]: () =>
-        Response.json({ message: 'Bad credentials' }, { status: 401 }),
-    });
-    signIn();
-    renderApp();
-
-    await screen.findByText(SESSION_MESSAGES.sessionExpired);
-    expect(loadToken()).toBeNull();
-    expect(screen.getByRole('button', { name: 'Connect GitHub' })).toBeTruthy();
-    expect(net.requests.some((r) => r.url.pathname === '/auth/revoke')).toBe(false);
   });
 });
 

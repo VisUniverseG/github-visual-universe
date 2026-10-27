@@ -58,14 +58,15 @@ export function fakeRepo(
   name: string,
   extra: Record<string, unknown> = {},
 ): Record<string, unknown> {
+  const owner = (extra['owner'] as { login: string } | undefined) ?? { login: 'octo' };
   return {
     id,
     name,
-    full_name: `octo/${name}`,
+    full_name: `${owner.login}/${name}`,
     private: false,
     description: null,
-    html_url: `https://github.com/octo/${name}`,
-    owner: { login: 'octo', id: 1, type: 'User' },
+    html_url: `https://github.com/${owner.login}/${name}`,
+    owner: { id: 1, type: 'User', ...owner },
     node_id: 'ignored-extra-field',
     ...extra,
   };
