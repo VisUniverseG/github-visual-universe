@@ -180,6 +180,45 @@ describe('ArchitectureView: loaded tree', () => {
     expect(screen.getByRole('img', { name: /sized by size/ })).toBeTruthy();
   });
 
+  it('marks nothing as a lower bound in a tree that is complete', async () => {
+    const { container } = await loaded();
+    expect(container.textContent).not.toContain('≥');
+  });
+
+  it('marks a size as a lower bound when a file in the folder has none, but not the count', async () => {
+    const { container } = await loaded({
+      [TREE_ROUTE]: () =>
+        treeResponse([dir('docs'), file('docs/a.md'), file('docs/b.md', 10), file('top.md', 5)]),
+    });
+    const docs = within(screen.getByRole('row', { name: /docs/ })).getAllByRole('cell');
+    expect(docs.map((cell) => cell.textContent)).toEqual(['Folder', '≥ 10 B', '2']);
+    const top = within(screen.getByRole('row', { name: /top\.md/ })).getAllByRole('cell');
+    expect(top.map((cell) => cell.textContent)).toEqual(['File', '5 B', '—']);
+    expect(tileTitles(container)).toEqual(['docs/: ≥ 10 B', 'top.md: 5 B']);
+
+    fireEvent.click(screen.getByLabelText('File count'));
+    expect(tileTitles(container)).toEqual(['docs/: 2 files', 'top.md: 1 file']);
+  });
+
+  it('marks sizes and counts as lower bounds when entries could not be read', async () => {
+    const { container } = await loaded({
+      [TREE_ROUTE]: () =>
+        treeResponse([
+          dir('docs'),
+          file('docs/a.md', 10),
+          file('top.md', 5),
+          { path: 'odd', type: 'banana', mode: '100644', sha: 'e'.repeat(40) },
+        ]),
+    });
+    expect(screen.getByText(/could not be read and was left out/)).toBeTruthy();
+    const docs = within(screen.getByRole('row', { name: /docs/ })).getAllByRole('cell');
+    expect(docs.map((cell) => cell.textContent)).toEqual(['Folder', '≥ 10 B', '≥ 1']);
+    expect(tileTitles(container)).toContain('docs/: ≥ 10 B');
+    // A file is what it is.
+    const top = within(screen.getByRole('row', { name: /top\.md/ })).getAllByRole('cell');
+    expect(top.map((cell) => cell.textContent)).toEqual(['File', '5 B', '—']);
+  });
+
   it('groups files by extension as a file count', async () => {
     await loaded();
     const types = screen.getByRole('region', { name: 'File types' });
@@ -223,11 +262,25 @@ describe('ArchitectureView: loaded tree', () => {
     await loaded({
       [TREE_ROUTE]: () => treeResponse([file('a.txt'), file('b.txt', 10)]),
     });
-    expect(screen.getByText(/1 file has no size from GitHub/)).toBeTruthy();
-    expect(stat('Total size')).toBe('10 B');
+    expect(screen.getByText(/1 file has no size from GitHub and adds nothing/)).toBeTruthy();
+    expect(stat('Total size')).toBe('≥ 10 B'); // a file with no size: a lower bound, not a total
     expect(
       within(screen.getByRole('row', { name: /a\.txt/ })).getAllByText('—').length,
     ).toBeGreaterThan(0);
+  });
+
+  it('tells an empty folder, an unsized file and a drawn file apart in the treemap note', async () => {
+    const { container } = await loaded({
+      [TREE_ROUTE]: () => treeResponse([dir('empty'), file('a.txt'), file('b.txt', 10)]),
+    });
+    // The empty folder is a known zero; the file has an unknown size. Neither is drawn.
+    expect(
+      screen.getByText(
+        '1 file has no size from GitHub. 1 entry has no size to measure. They are not drawn; the table lists every entry.',
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/no known size yet/)).toBeNull();
+    expect(tileTitles(container)).toEqual(['b.txt: 10 B']);
   });
 
   it('says so when the repository has no files on this branch', async () => {
@@ -239,8 +292,14 @@ describe('ArchitectureView: loaded tree', () => {
 
 describe('ArchitectureView: incomplete data is never shown as complete', () => {
   it('labels a truncated listing partial and explains why', async () => {
-    await loaded({ [TREE_ROUTE]: () => treeResponse(SAMPLE, true) });
-    expect(screen.getByText('Partial · 4 files counted')).toBeTruthy();
+    // A truncated recursive listing is discarded; only the root's direct children are shown.
+    await loaded({
+      [TREE_ROUTE]: (request) =>
+        request.url.searchParams.has('recursive')
+          ? treeResponse(SAMPLE, true)
+          : treeResponse([file('README.md', 100), dir('src'), dir('docs')]),
+    });
+    expect(screen.getByText('Partial · 1 file counted')).toBeTruthy();
     expect(screen.getByText(/GitHub cut this listing off/)).toBeTruthy();
     expect(screen.getByText(/lower bounds, not totals/)).toBeTruthy();
     expect(screen.queryByText(/^Complete/)).toBeNull();

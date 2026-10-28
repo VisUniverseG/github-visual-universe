@@ -1,4 +1,4 @@
-import type { ArchNode } from './model.ts';
+import type { NodeKind } from './names.ts';
 
 /**
  * Squarified treemap layout (Bruls, Huizing and van Wijk, 2000), written out here so no chart
@@ -7,6 +7,22 @@ import type { ArchNode } from './model.ts';
 
 export type Metric = 'bytes' | 'files';
 
+/**
+ * What the layout needs to know about an entry. Both the one-shot model's nodes and the store's
+ * nodes fit; for a folder that has not been listed, `bytes` and `fileCount` are `null` ("unknown"),
+ * and it has nothing to draw.
+ */
+export interface MeasuredNode {
+  readonly id: number;
+  readonly kind: NodeKind;
+  readonly bytes: number | null;
+  readonly fileCount: number | null;
+  /** `false` when `fileCount` is only a lower bound. A node that does not say counts as exact. */
+  readonly exact?: boolean;
+  /** `false` when `bytes` is only a lower bound. A node that does not say counts as exact. */
+  readonly bytesExact?: boolean;
+}
+
 export interface Rect {
   readonly x: number;
   readonly y: number;
@@ -14,27 +30,36 @@ export interface Rect {
   readonly h: number;
 }
 
-export interface Tile {
+export interface Tile<N extends MeasuredNode = MeasuredNode> {
   readonly key: string;
   /** The directory entry this tile stands for; `null` for the "smaller items" tile. */
-  readonly node: ArchNode | null;
+  readonly node: N | null;
   readonly value: number;
+  /** `true` when `value` is a lower bound (for the "smaller items" tile: for any item in it). */
+  readonly lowerBound: boolean;
   readonly rect: Rect;
   /** For the "smaller items" tile: how many items it stands for. `0` otherwise. */
   readonly restCount: number;
 }
 
-export interface TreemapLayout {
-  readonly tiles: readonly Tile[];
+export interface TreemapLayout<N extends MeasuredNode = MeasuredNode> {
+  readonly tiles: readonly Tile<N>[];
   /** Entries with nothing to measure (empty directories, zero-byte files…): not drawn. */
   readonly undrawn: number;
 }
 
 /** The size of one entry under a metric. Entries with no measurable size return `0`. */
-export function metricValue(node: ArchNode, metric: Metric): number {
+export function metricValue(node: MeasuredNode, metric: Metric): number {
   if (metric === 'bytes') return node.bytes ?? 0;
-  if (node.kind === 'directory') return node.fileCount;
+  if (node.kind === 'directory') return node.fileCount ?? 0;
   return node.kind === 'file' || node.kind === 'symlink' ? 1 : 0;
+}
+
+/** Whether the size of one entry under a metric is a lower bound rather than the true figure. */
+export function isLowerBound(node: MeasuredNode, metric: Metric): boolean {
+  if (metric === 'bytes') return node.bytesExact === false;
+  // Only a folder's count can be short; a file or symlink counts as exactly one.
+  return node.kind === 'directory' && node.exact === false;
 }
 
 /**
@@ -106,12 +131,12 @@ export function squarify(values: readonly number[], bounds: Rect): Rect[] {
 export const MAX_TILES = 40;
 
 /** Lays out the direct children of a directory. */
-export function layoutChildren(
-  directory: ArchNode,
+export function layoutChildren<N extends MeasuredNode>(
+  directory: { readonly children: readonly N[] },
   metric: Metric,
   bounds: Rect,
   maxTiles: number = MAX_TILES,
-): TreemapLayout {
+): TreemapLayout<N> {
   const measured = directory.children
     .map((node) => ({ node, value: metricValue(node, metric) }))
     .filter((item) => item.value > 0)
@@ -127,7 +152,7 @@ export function layoutChildren(
   if (rest.length > 0) values.push(restValue);
 
   const rects = squarify(values, bounds);
-  const tiles: Tile[] = [];
+  const tiles: Tile<N>[] = [];
   shown.forEach((item, index) => {
     const rect = rects[index];
     if (rect) {
@@ -135,6 +160,7 @@ export function layoutChildren(
         key: `node:${String(item.node.id)}`,
         node: item.node,
         value: item.value,
+        lowerBound: isLowerBound(item.node, metric),
         rect,
         restCount: 0,
       });
@@ -146,6 +172,7 @@ export function layoutChildren(
       key: 'rest',
       node: null,
       value: restValue,
+      lowerBound: rest.some((item) => isLowerBound(item.node, metric)),
       rect: restRect,
       restCount: rest.length,
     });

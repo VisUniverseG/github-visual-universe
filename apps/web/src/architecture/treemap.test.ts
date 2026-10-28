@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildArchitecture } from './model.ts';
-import { layoutChildren, metricValue, squarify, type Rect } from './treemap.ts';
+import { layoutChildren, metricValue, squarify, type MeasuredNode, type Rect } from './treemap.ts';
 
 const BOUNDS: Rect = { x: 0, y: 0, w: 1000, h: 500 };
 const area = (r: Rect) => r.w * r.h;
@@ -103,6 +103,63 @@ describe('layoutChildren', () => {
   it('returns no tiles for an empty directory', () => {
     const empty = model.nodes.find((n) => n.path === 'empty');
     expect(layoutChildren(empty ?? model.root, 'bytes', BOUNDS)).toEqual({ tiles: [], undrawn: 0 });
+  });
+
+  describe('lower bounds', () => {
+    const node = (
+      id: number,
+      kind: 'file' | 'directory',
+      bytes: number | null,
+      fileCount: number | null,
+      flags: { exact?: boolean; bytesExact?: boolean } = {},
+    ): MeasuredNode => ({ id, kind, bytes, fileCount, ...flags });
+
+    const children = [
+      node(1, 'directory', 500, 5, { exact: true, bytesExact: true }),
+      node(2, 'directory', 300, 3, { exact: false, bytesExact: false }),
+      // Every file is listed, but one has no size: the count is exact, the bytes are not.
+      node(3, 'directory', 200, 2, { exact: true, bytesExact: false }),
+      node(4, 'file', 100, null, { exact: true, bytesExact: true }),
+      // Not listed: nothing to measure, so nothing to mark.
+      node(5, 'directory', null, null, { exact: false, bytesExact: false }),
+      // A node that says nothing about exactness is exact.
+      node(6, 'file', 50, null),
+    ];
+    const flagsOf = (metric: 'bytes' | 'files') =>
+      layoutChildren({ children }, metric, BOUNDS).tiles.map((t) => [t.node?.id, t.lowerBound]);
+
+    it('flags a tile by bytes only when its bytes are a lower bound', () => {
+      expect(flagsOf('bytes')).toEqual([
+        [1, false],
+        [2, true],
+        [3, true],
+        [4, false],
+        [6, false],
+      ]);
+    });
+
+    it('flags a tile by file count only when its count is a lower bound', () => {
+      expect(flagsOf('files')).toEqual([
+        [1, false],
+        [2, true],
+        [3, false],
+        [4, false],
+        [6, false],
+      ]);
+    });
+
+    it('flags the "smaller items" tile when any item it stands for is a lower bound', () => {
+      const small = (inexact: boolean) => [
+        node(1, 'file', 100, null),
+        node(2, 'file', 90, null),
+        node(3, 'directory', 5, 1, { exact: !inexact, bytesExact: !inexact }),
+        node(4, 'directory', 4, 1, { exact: true, bytesExact: true }),
+      ];
+      const restOf = (items: MeasuredNode[]) =>
+        layoutChildren({ children: items }, 'bytes', BOUNDS, 3).tiles.find((t) => t.node === null);
+      expect(restOf(small(false))?.lowerBound).toBe(false);
+      expect(restOf(small(true))?.lowerBound).toBe(true);
+    });
   });
 
   it('metricValue is zero for entries with no size or count', () => {

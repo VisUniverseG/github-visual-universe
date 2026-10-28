@@ -37,3 +37,22 @@ export function formatBytes(bytes: number): string {
   const text = value >= 100 ? String(Math.round(value)) : value.toFixed(1).replace(/\.0$/, '');
   return `${text} ${units[unit] ?? 'B'}`;
 }
+
+/** Marks a figure that is a lower bound, not a total: "≥ 1.5 KB". An exact figure is unchanged. */
+export function lowerBound(text: string, exact: boolean): string {
+  return exact ? text : `≥ ${text}`;
+}
+
+/**
+ * A figure that may be a lower bound. Exact: as it is, zero included ("0", "0 B"). Inexact and
+ * positive: "≥ n". Inexact and zero: "—", because "at least 0" is true of everything and says
+ * nothing; it must not read as an empty folder.
+ */
+export function boundedFigure(
+  value: number,
+  format: (value: number) => string,
+  exact: boolean,
+): string {
+  if (!exact && value === 0) return '—';
+  return lowerBound(format(value), exact);
+}

@@ -1,5 +1,6 @@
-import { formatBytes, formatCount } from '../../dashboard/format.ts';
-import type { ArchNode, NodeKind } from '../../architecture/model.ts';
+import { boundedFigure, formatBytes, formatCount } from '../../dashboard/format.ts';
+import type { NodeKind } from '../../architecture/names.ts';
+import type { TreeNode } from '../../architecture/store.ts';
 
 /** Rows drawn before the rest are folded behind "Show all". */
 export const MAX_ROWS = 300;
@@ -11,8 +12,16 @@ const KIND_LABELS: Record<NodeKind, string> = {
   submodule: 'Submodule',
 };
 
+/** What to add to "Folder" for a folder whose contents are not (all) known. */
+function folderState(node: TreeNode): string {
+  if (node.status === 'unloaded') return node.loadable ? ' · not loaded' : ' · cannot be loaded';
+  if (node.status === 'loading') return ' · loading…';
+  if (node.status === 'failed') return ' · failed to load';
+  return '';
+}
+
 interface Props {
-  readonly directory: ArchNode;
+  readonly directory: TreeNode;
   readonly showAll: boolean;
   readonly onShowAll: () => void;
   readonly onOpen: (id: number) => void;
@@ -59,10 +68,19 @@ export function DirectoryTable({ directory, showAll, onShowAll, onOpen }: Props)
                   node.name
                 )}
               </th>
-              <td>{KIND_LABELS[node.kind]}</td>
-              <td className="num">{node.bytes === null ? '—' : formatBytes(node.bytes)}</td>
+              <td>
+                {KIND_LABELS[node.kind]}
+                {node.kind === 'directory' ? folderState(node) : ''}
+              </td>
               <td className="num">
-                {node.kind === 'directory' ? formatCount(node.fileCount) : '—'}
+                {node.bytes === null
+                  ? '—'
+                  : boundedFigure(node.bytes, formatBytes, node.bytesExact)}
+              </td>
+              <td className="num">
+                {node.kind === 'directory' && node.fileCount !== null
+                  ? boundedFigure(node.fileCount, formatCount, node.exact)
+                  : '—'}
               </td>
             </tr>
           ))}

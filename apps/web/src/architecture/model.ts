@@ -1,16 +1,20 @@
 import type { GitHubTreeEntry } from '@gvu/shared';
+import { displayText, extensionOf, type NodeKind } from './names.ts';
+import { TreeStore, type ExtensionStat, type TreeSnapshot } from './store.ts';
 
 /**
- * Turns the flat list of a Git tree into a directory hierarchy with totals. Pure and synchronous:
- * it never fetches anything and never invents data. A file whose size GitHub did not report counts
- * as a file but adds nothing to byte totals, and is counted in `filesWithoutSize`.
+ * The one-shot view of a whole Git tree: a directory hierarchy with totals, built from a flat
+ * list of entries. It is a thin wrapper over {@link TreeStore}: every directory it describes is
+ * covered by the listing, so every figure here is exact for the entries it was given. A file whose
+ * size GitHub did not report counts as a file but adds nothing to byte totals, and is counted in
+ * `filesWithoutSize`.
  *
- * Paths come from the repository and are untrusted. Every name is turned into display-safe text
- * here (control and bidirectional-override characters replaced, length capped), and paths are only
- * ever used as map keys and text, never resolved, never put in a URL.
+ * Use the store directly when a tree arrives in pieces; its snapshots say which figures are
+ * lower bounds.
  */
 
-export type NodeKind = 'directory' | 'file' | 'symlink' | 'submodule';
+export { displayText, extensionOf };
+export type { ExtensionStat, NodeKind };
 
 export interface ArchNode {
   /** Index into {@link ArchitectureModel.nodes}. The root is `0`. */
@@ -47,13 +51,6 @@ export interface ArchitectureTotals {
   readonly maxDepth: number;
 }
 
-export interface ExtensionStat {
-  /** `null` is "no extension". */
-  readonly extension: string | null;
-  readonly files: number;
-  readonly bytes: number;
-}
-
 export interface ArchitectureModel {
   readonly root: ArchNode;
   /** Every node by `id`. */
@@ -65,211 +62,69 @@ export interface ArchitectureModel {
   readonly inconsistent: number;
 }
 
-const MAX_NAME_LENGTH = 200;
-const MAX_EXTENSION_LENGTH = 16;
-const SYMLINK_MODE = '120000';
-
-function isUnsafeCode(code: number): boolean {
-  return (
-    code <= 0x1f ||
-    (code >= 0x7f && code <= 0x9f) ||
-    (code >= 0x200b && code <= 0x200f) || // zero-width and directional marks
-    (code >= 0x202a && code <= 0x202e) || // bidirectional embeddings and overrides
-    (code >= 0x2066 && code <= 0x2069) || // bidirectional isolates
-    code === 0xfeff
-  );
-}
-
-/** Text that is safe to show: unsafe characters become U+FFFD and very long names are cut. */
-export function displayText(value: string): string {
-  let out = '';
-  for (let index = 0; index < value.length; index += 1) {
-    out += isUnsafeCode(value.charCodeAt(index)) ? '\uFFFD' : (value[index] ?? '');
+/** The legacy, all-exact shape of a snapshot whose every directory is listed. */
+function toArchitectureModel(snapshot: TreeSnapshot): ArchitectureModel {
+  const legacy: ArchNode[] = [];
+  // A child's id is above its parent's, so going down from the last id builds children first.
+  for (let id = snapshot.nodes.length - 1; id >= 0; id -= 1) {
+    const node = snapshot.nodes[id];
+    if (node === undefined) throw new Error('The snapshot has a gap.');
+    legacy[id] = {
+      id: node.id,
+      parent: node.parent,
+      name: node.name,
+      path: node.path,
+      kind: node.kind,
+      depth: node.depth,
+      bytes: node.kind === 'directory' ? (node.bytes ?? 0) : node.bytes,
+      fileCount: node.fileCount ?? 0,
+      directoryCount: node.directoryCount ?? 0,
+      children: node.children.map((child) => {
+        const converted = legacy[child.id];
+        if (converted === undefined) throw new Error('A child was not converted first.');
+        return converted;
+      }),
+      extension: node.extension,
+    };
   }
-  return out.length > MAX_NAME_LENGTH ? `${out.slice(0, MAX_NAME_LENGTH - 1)}…` : out;
-}
-
-export function extensionOf(name: string): string | null {
-  const dot = name.lastIndexOf('.');
-  if (dot <= 0 || dot === name.length - 1) return null;
-  const extension = name.slice(dot + 1);
-  return extension.length > MAX_EXTENSION_LENGTH ? null : displayText(extension).toLowerCase();
-}
-
-interface Draft {
-  id: number;
-  parent: number | null;
-  name: string;
-  path: string;
-  kind: NodeKind;
-  depth: number;
-  bytes: number | null;
-  fileCount: number;
-  directoryCount: number;
-  children: Draft[];
-  extension: string | null;
-}
-
-const collator = new Intl.Collator('en', { sensitivity: 'base', numeric: true });
-
-function compareDrafts(a: Draft, b: Draft): number {
-  const aDir = a.kind === 'directory' ? 0 : 1;
-  const bDir = b.kind === 'directory' ? 0 : 1;
-  return aDir - bDir || collator.compare(a.name, b.name) || a.id - b.id;
-}
-
-function kindOf(entry: GitHubTreeEntry): NodeKind {
-  if (entry.type === 'tree') return 'directory';
-  if (entry.type === 'commit') return 'submodule';
-  return entry.mode === SYMLINK_MODE ? 'symlink' : 'file';
+  const root = legacy[0];
+  if (root === undefined) throw new Error('The snapshot has no root.');
+  const { totals } = snapshot;
+  return {
+    root,
+    nodes: legacy,
+    totals: {
+      files: totals.files,
+      directories: totals.directories,
+      symlinks: totals.symlinks,
+      submodules: totals.submodules,
+      bytes: totals.bytes,
+      filesWithoutSize: totals.filesWithoutSize,
+      maxDepth: totals.maxDepth,
+    },
+    extensions: snapshot.extensions,
+    inconsistent: snapshot.inconsistent,
+  };
 }
 
 export function buildArchitecture(entries: readonly GitHubTreeEntry[]): ArchitectureModel {
-  const root: Draft = {
-    id: 0,
-    parent: null,
-    name: '',
-    path: '',
-    kind: 'directory',
-    depth: 0,
-    bytes: 0,
-    fileCount: 0,
-    directoryCount: 0,
-    children: [],
-    extension: null,
-  };
-  const drafts: Draft[] = [root];
-  // Keyed by the raw path so two entries that differ only in unsafe characters stay distinct.
-  const byPath = new Map<string, Draft>([['', root]]);
-  let inconsistent = 0;
-  let maxDepth = 0;
-  let symlinks = 0;
-  let submodules = 0;
-  let filesWithoutSize = 0;
-  const extensionStats = new Map<string | null, { files: number; bytes: number }>();
-
-  const create = (parent: Draft, rawName: string, kind: NodeKind, size: number | null): Draft => {
-    const name = displayText(rawName);
-    const node: Draft = {
-      id: drafts.length,
-      parent: parent.id,
-      name,
-      path: parent.path === '' ? name : `${parent.path}/${name}`,
-      kind,
-      depth: parent.depth + 1,
-      bytes: kind === 'directory' ? 0 : size,
-      fileCount: 0,
-      directoryCount: 0,
-      children: [],
-      extension: kind === 'file' ? extensionOf(rawName) : null,
-    };
-    drafts.push(node);
-    parent.children.push(node);
-    if (node.depth > maxDepth) maxDepth = node.depth;
-    return node;
-  };
-
-  for (const entry of entries) {
-    const segments = entry.path.split('/');
-    if (segments.includes('')) {
-      inconsistent += 1;
-      continue;
-    }
-
-    // Walk (and create, if the tree did not list them) the parent directories.
-    let parent = root;
-    let prefix = '';
-    let usable = true;
-    for (let index = 0; index < segments.length - 1; index += 1) {
-      const segment = segments[index] ?? '';
-      prefix = prefix === '' ? segment : `${prefix}/${segment}`;
-      let directory = byPath.get(prefix);
-      if (directory === undefined) {
-        directory = create(parent, segment, 'directory', null);
-        byPath.set(prefix, directory);
-      } else if (directory.kind !== 'directory') {
-        usable = false;
-        break;
-      }
-      parent = directory;
-    }
-    if (!usable) {
-      inconsistent += 1;
-      continue;
-    }
-
-    const leaf = segments[segments.length - 1] ?? '';
-    const key = prefix === '' ? leaf : `${prefix}/${leaf}`;
-    const kind = kindOf(entry);
-    const existing = byPath.get(key);
-    if (existing !== undefined) {
-      // A directory may legitimately be created implicitly before its own entry shows up.
-      if (!(existing.kind === 'directory' && kind === 'directory')) inconsistent += 1;
-      continue;
-    }
-
-    const node = create(parent, leaf, kind, entry.size ?? null);
-    byPath.set(key, node);
-
-    if (kind === 'symlink') symlinks += 1;
-    else if (kind === 'submodule') submodules += 1;
-    if ((kind === 'file' || kind === 'symlink') && node.bytes === null) filesWithoutSize += 1;
-    if (kind === 'file') {
-      const stat = extensionStats.get(node.extension) ?? { files: 0, bytes: 0 };
-      stat.files += 1;
-      stat.bytes += node.bytes ?? 0;
-      extensionStats.set(node.extension, stat);
-    }
-  }
-
-  // Parents are always created before their children, so a reverse pass sees every child before
-  // its parent: a bottom-up aggregation with no recursion (deep trees cannot overflow the stack).
-  for (let index = drafts.length - 1; index > 0; index -= 1) {
-    const node = drafts[index];
-    if (node?.parent === null || node?.parent === undefined) continue;
-    const parent = drafts[node.parent];
-    if (parent === undefined) continue;
-    if (node.kind === 'directory') {
-      parent.fileCount += node.fileCount;
-      parent.directoryCount += node.directoryCount + 1;
-      parent.bytes = (parent.bytes ?? 0) + (node.bytes ?? 0);
-    } else if (node.kind === 'file' || node.kind === 'symlink') {
-      parent.fileCount += 1;
-      parent.bytes = (parent.bytes ?? 0) + (node.bytes ?? 0);
-    }
-  }
-  for (const node of drafts) node.children.sort(compareDrafts);
-
-  const extensions: ExtensionStat[] = [...extensionStats.entries()]
-    .map(([extension, stat]) => ({ extension, ...stat }))
-    .sort(
-      (a, b) =>
-        b.files - a.files ||
-        b.bytes - a.bytes ||
-        collator.compare(a.extension ?? '', b.extension ?? ''),
-    );
-
-  return {
-    root,
-    nodes: drafts,
-    totals: {
-      files: root.fileCount - symlinks,
-      directories: root.directoryCount,
-      symlinks,
-      submodules,
-      bytes: root.bytes ?? 0,
-      filesWithoutSize,
-      maxDepth,
-    },
-    extensions,
-    inconsistent,
-  };
+  const store = TreeStore.fromRootListing({
+    sha: null,
+    recursive: true,
+    entries,
+    skipped: 0,
+    truncated: false,
+  });
+  return toArchitectureModel(store.snapshot());
 }
 
-/** The chain from the root down to `id`, inclusive. */
-export function ancestors(model: ArchitectureModel, id: number): ArchNode[] {
-  const chain: ArchNode[] = [];
-  let current: ArchNode | undefined = model.nodes[id];
+/** The chain from the root down to `id`, inclusive. Works on a model or a store snapshot. */
+export function ancestors<N extends { readonly parent: number | null }>(
+  model: { readonly nodes: readonly N[] },
+  id: number,
+): N[] {
+  const chain: N[] = [];
+  let current: N | undefined = model.nodes[id];
   while (current !== undefined) {
     chain.push(current);
     current = current.parent === null ? undefined : model.nodes[current.parent];

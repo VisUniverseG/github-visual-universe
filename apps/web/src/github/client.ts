@@ -27,10 +27,20 @@ export class GitHubApiError extends Error {
   }
 }
 
+/** What GitHub says about the request budget after a response. Nothing else is exposed. */
+export interface GitHubRateLimit {
+  /** Requests left in the current window. */
+  readonly remaining: number;
+  /** Epoch milliseconds at which the window resets; `null` when GitHub did not say. */
+  readonly resetAt: number | null;
+}
+
 export interface GitHubPage<T> {
   readonly data: T;
   /** Absolute URL of the next page, validated to be on api.github.com; `null` on the last page. */
   readonly nextUrl: string | null;
+  /** `null` when the response carried no readable rate-limit headers. */
+  readonly rateLimit: GitHubRateLimit | null;
 }
 
 /** Resolves a path or absolute URL and refuses anything that is not https://api.github.com. */
@@ -63,11 +73,30 @@ export function parseNextLink(header: string | null): string | null {
   return null;
 }
 
+/** Reads `x-ratelimit-remaining` / `x-ratelimit-reset`; a missing or malformed pair is `null`. */
+export function parseRateLimit(headers: Headers): GitHubRateLimit | null {
+  const rawRemaining = headers.get('x-ratelimit-remaining');
+  // `Number(null)` and `Number('')` are 0, which would read as "exhausted": require real digits.
+  if (rawRemaining === null || !/^\d{1,9}$/.test(rawRemaining.trim())) return null;
+  const rawReset = headers.get('x-ratelimit-reset');
+  const reset = rawReset !== null && /^\d{1,12}$/.test(rawReset.trim()) ? Number(rawReset) : 0;
+  return {
+    remaining: Number(rawRemaining),
+    resetAt: reset > 0 ? reset * 1000 : null,
+  };
+}
+
+/**
+ * When a rate limit ends, in epoch milliseconds. `retry-after` (seconds from now) comes first: it
+ * is what GitHub asks for, and for a secondary limit `x-ratelimit-reset` describes the primary
+ * window, which may end much later. A missing or unusable `retry-after` falls back to
+ * `x-ratelimit-reset` (epoch seconds). With neither, there is no time to report.
+ */
 function rateLimitReset(headers: Headers): number | undefined {
-  const reset = Number(headers.get('x-ratelimit-reset'));
-  if (Number.isFinite(reset) && reset > 0) return reset * 1000;
   const retryAfter = Number(headers.get('retry-after'));
   if (Number.isFinite(retryAfter) && retryAfter > 0) return Date.now() + retryAfter * 1000;
+  const reset = Number(headers.get('x-ratelimit-reset'));
+  if (Number.isFinite(reset) && reset > 0) return reset * 1000;
   return undefined;
 }
 
@@ -119,12 +148,30 @@ export async function githubGet<T>(
   // browser (the refresh token is never stored here).
   if (!res.ok) throw classifyFailure(res);
 
+  // Reading the body can fail for two different reasons. A broken connection or the timeout while
+  // the body is still arriving is a network problem and asking again may work; text that is not
+  // JSON is something GitHub sent and asking again will not fix. An abort by the caller is theirs
+  // to handle, exactly as in the request above.
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new GitHubApiError(isSyntaxError(error) ? 'invalid_response' : 'network');
+  }
+
   try {
     return {
-      data: parse((await res.json()) as unknown),
+      data: parse(body),
       nextUrl: parseNextLink(res.headers.get('link')),
+      rateLimit: parseRateLimit(res.headers),
     };
   } catch {
     throw new GitHubApiError('invalid_response');
   }
+}
+
+/** `JSON.parse` failures. Matched by name, because the error may come from another realm. */
+function isSyntaxError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'SyntaxError';
 }
