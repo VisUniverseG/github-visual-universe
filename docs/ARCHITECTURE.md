@@ -20,7 +20,7 @@ differ. `PRIVACY.md`, `SECURITY.md` and the Phase 0 assessment have been aligned
 | GitHub App registration            | ✅ Created and installed. Credentials are configured locally only.                   |
 | Auth broker + sign-in (PKCE)       | ✅ Implemented; manually verified against real GitHub. Automated tests use mocks.    |
 | GitHub data layer (read-only)      | 🟡 Repository discovery, `GET /user`, branch head and file tree; the rest is later   |
-| Visualizations                     | 🟡 Overview, language chart and file-tree architecture done; the rest (Phases 6–10)  |
+| Visualizations                     | 🟡 Overview, language chart and file-tree architecture done; the rest (Phases 7–10)  |
 | Deployment (Pages + Render)        | ⏳ Planned (Phase 11)                                                                |
 
 ## Repository layout
@@ -245,34 +245,65 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
     updated by `updated_at`) all combine (AND). Statistics always describe the whole loaded dataset,
     not the filtered view. "Last pushed" (`pushed_at`) appears in the detail panel only.
   - _Selection:_ choosing a card opens a detail panel with only fields the list already returned.
-- **Architecture view (Phase 5).** The detail panel's "View architecture" button opens a read-only
-  view of one repository's file tree on its **default branch**. It needs no backend change: the
-  browser calls `api.github.com` directly with the user's token, using the Contents (read-only)
-  permission that was already part of the App.
+- **Architecture view (Phases 5 and 6).** The detail panel's "View architecture" button opens a
+  read-only view of one repository's file tree on its **default branch**. It needs no backend
+  change: the browser calls `api.github.com` directly with the user's token, using the Contents
+  (read-only) permission that was already part of the App.
   - _Requests (all GET):_ `GET /repos/{owner}/{repo}/branches/{branch}` (head commit and tree SHA),
     then `GET /repos/{owner}/{repo}/git/trees/{tree_sha}?recursive=1`. If the repository list did
-    not include a default branch, one `GET /repos/{owner}/{repo}` comes first. File contents, blobs
-    and other branches are never requested. Owner and repository names are validated before they
-    are placed in a URL, and the tree SHA is validated as hex by the shared schema.
+    not include a default branch, one `GET /repos/{owner}/{repo}` comes first. A repository too
+    large for that one request adds the per-folder listings described under _Large repositories_
+    below. File contents, blobs and other branches are never requested. Owner and repository names
+    are validated before they are placed in a URL, and every tree SHA is validated as hex (by the
+    shared schema, and again before each request).
   - _What it shows:_ a snapshot "of branch X at commit abc1234" with totals (files, folders, total
     size, deepest level, symlinks, submodules), a treemap of the current folder (tiles sized by
     bytes or by file count, drawn with SVG attributes only: no inline `style`, no chart library), a
     breadcrumb, a table of the folder's entries (the keyboard and screen-reader route to the same
     information), and a count of files by extension (a file count, not lines of code). Folders
     open from the table, the treemap or the breadcrumb.
-  - _Partial data:_ GitHub caps a recursive listing at 100,000 entries or 7 MB and then sets
-    `truncated`. The view then says so and labels every figure **Partial** ("lower bounds, not
-    totals"); entries that cannot be read, or that contradict the tree, are skipped, counted and
-    reported the same way. It never presents a cut-off listing as complete. A file without a
-    reported size counts as a file but adds no bytes, and is reported.
+  - _Partial data:_ entries that cannot be read, or that contradict the tree, are skipped, counted
+    and reported, and every figure is then labelled **Partial** ("lower bounds, not totals"). A
+    file without a reported size counts as a file but adds no bytes, and is reported. The view
+    never presents an incomplete listing as complete.
+  - _Large repositories (Phase 6):_ GitHub caps a recursive listing at 100,000 entries or 7 MB and
+    then sets `truncated`. A cut-off listing is not guaranteed to be a clean prefix of the tree, so
+    none of it is used. The view discards it and lists only the root's direct children
+    (`GET /repos/{owner}/{repo}/git/trees/{tree_sha}`, sent without a `recursive` parameter,
+    because GitHub treats any value of it as true). This is "lazy" mode: the root's folders start
+    out **not loaded**, and a folder is listed when it is opened (from the table, the treemap or
+    the breadcrumb, or with its "Load this folder" button), by the tree SHA GitHub gave for it. A
+    repository that fits in one request is read completely up front and makes no folder requests.
+  - _How folders are loaded:_ each folder takes one non-recursive request. Concurrent requests for
+    one folder share a single request, a folder that is already listed is not requested again, and
+    at most four requests are active at once (the rest wait in a queue). Files, symlinks,
+    submodules and folders without a well-formed SHA are never requested; such a folder is shown
+    as "cannot be loaded". Nothing is loaded in advance or retried automatically.
+  - _Figures while folders are missing:_ a folder that has not been listed has an unknown size and
+    file count, shown as "—" and never as `0`, and it is not drawn in the treemap. Totals and each
+    folder's figures cover only what has been listed, and are marked "≥" while they are lower
+    bounds (a floor of zero is shown as "—", not "≥ 0"). The summary says **Partial** until every
+    folder has been listed with nothing cut off or unreadable, and **Complete** after that.
+  - _Cut-off folders:_ a single folder can itself be too large for GitHub to list in full (it sets
+    `truncated` on that folder's own listing, or on the root's). Its missing entries cannot be
+    loaded and asking again will not bring them back, so the view says so and the repository stays
+    **Partial** even after every folder has been loaded.
   - _Failures:_ an empty repository (409), a missing branch or no access (404), a refusal such as a
     missing Contents permission (403), rate limits and network errors each have their own message
-    with "Try again"; a 401 ends the session as everywhere else.
+    with "Try again"; a 401 ends the session as everywhere else. If the root listing of a large
+    repository fails, that failure is reported; the cut-off data is not used as a fallback. A
+    failure while loading a folder affects only that folder: it is shown as failed with a fixed
+    message (nothing from GitHub's response is echoed), and "Try again" is offered only when
+    asking again could help (a network error, a server error or 408, or a rate limit). When GitHub
+    reports that the rate limit is used up, no further requests are made until the reset time
+    GitHub gave (`retry-after` first, otherwise `x-ratelimit-reset`), and the view says when
+    folders can be loaded again. A 401 on any folder ends the session: requests in flight are
+    cancelled and nothing more is requested.
   - _Untrusted paths:_ file and folder names come from the repository. They are shown as text only
     (control and bidirectional-override characters are replaced, long names cut), are never used
     to build URLs, and `.`/`..` are plain names: nothing is resolved.
-  - _Nothing is stored:_ the listing lives in memory while the view is open and is dropped when
-    you go back. There is no cache.
+  - _Nothing is stored:_ the listing, including any folders loaded later, lives in memory while the
+    view is open and is dropped when you go back. There is no cache.
 - **Disconnect** has two separately reported halves: the browser session is cleared immediately, and
   GitHub revocation is requested through the broker and reported as done **only if GitHub confirmed
   it**.
@@ -317,13 +348,16 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
   commits, pull requests, issues and workflows have no views yet. The 30-page cap means an
   account with more than about 3,000 accessible repositories shows partial statistics until
   "Load more" is used. The installation list itself is capped at 10 pages.
-- **Architecture view limits:** default branch only. For a repository over GitHub's tree limit the
-  view shows the partial listing GitHub returned and labels it partial; folders are **not** loaded
-  on demand to complete it. Sizes are the sizes of Git blobs (a Git LFS file shows its small pointer
-  size), and committed build output or vendored folders will dominate a size view. Verified live
-  by the maintainer on one small repository (branch and tree requests, 65 entries, not truncated).
-  Not yet verified live: a truncated tree, an empty repository, a branch name containing `/`, an
-  organization repository, submodules and symlinks (covered by mocked tests only).
+- **Architecture view limits:** default branch only. For a repository over GitHub's tree limit only
+  the root is listed at first and each folder is loaded when it is opened, one request per folder,
+  with nothing loaded in advance. The repository stays **Partial** until every folder has been
+  listed, and a folder that GitHub itself cuts off can never be completed. Sizes are the sizes of
+  Git blobs (a Git LFS file shows its small pointer size), and committed build output or vendored
+  folders will dominate a size view. Verified live by the maintainer on one small repository
+  (branch and tree requests, 65 entries, not truncated). Not yet verified live: lazy loading of a
+  large repository (a truncated tree, per-folder listings and their rate limits), an empty
+  repository, a branch name containing `/`, an organization repository, submodules and symlinks
+  (covered by mocked tests only).
 - No `404.html`/router fallback yet (decision pending: `HashRouter` vs. fallback, spike item 10).
   The auth callback paths depend on this decision.
 - No deploy workflows, `render.yaml`, Dependabot config, or issue/PR templates.
