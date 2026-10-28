@@ -20,7 +20,9 @@ export type {
 } from './auth.js';
 
 export {
+  githubBranchListEntrySchema,
   githubBranchSchema,
+  githubCommitSchema,
   githubDefaultBranchSchema,
   githubInstallationRepositoriesResponseSchema,
   githubInstallationSchema,
@@ -30,11 +32,15 @@ export {
   githubTreeEntrySchema,
   githubUserSchema,
   gitShaSchema,
+  parseBranchList,
+  parseCommitList,
   parseGitTree,
   parseInstallationRepositories,
 } from './github.js';
 export type {
   GitHubBranch,
+  GitHubBranchListEntry,
+  GitHubCommit,
   GitHubDefaultBranch,
   GitHubInstallation,
   GitHubInstallationRepositoriesResponse,
@@ -42,5 +48,7 @@ export type {
   GitHubRepository,
   GitHubTreeEntry,
   GitHubUser,
+  ParsedBranchList,
+  ParsedCommitList,
   ParsedGitTree,
 } from './github.js';

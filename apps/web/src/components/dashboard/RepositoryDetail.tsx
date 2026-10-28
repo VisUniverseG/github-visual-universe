@@ -7,6 +7,7 @@ interface Props {
   readonly repo: RepositoryItem;
   readonly onClose: () => void;
   readonly onOpenArchitecture: () => void;
+  readonly onOpenActivity: () => void;
 }
 
 interface Row {
@@ -18,7 +19,7 @@ interface Row {
  * Details for one repository, limited to what the repository list already returned. Rows for
  * missing values are omitted rather than shown as zero or "unknown".
  */
-export function RepositoryDetail({ repo, onClose, onOpenArchitecture }: Props) {
+export function RepositoryDetail({ repo, onClose, onOpenArchitecture, onOpenActivity }: Props) {
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   // Move focus to the panel when a repository is selected, so keyboard and screen-reader users
@@ -63,14 +64,19 @@ export function RepositoryDetail({ repo, onClose, onOpenArchitecture }: Props) {
 
       {repo.description && <p>{repo.description}</p>}
 
-      <button
-        type="button"
-        className="primary"
-        data-architecture-button
-        onClick={onOpenArchitecture}
-      >
-        View architecture
-      </button>
+      <div className="detail-actions">
+        <button
+          type="button"
+          className="primary"
+          data-architecture-button
+          onClick={onOpenArchitecture}
+        >
+          View architecture
+        </button>
+        <button type="button" className="primary" data-activity-button onClick={onOpenActivity}>
+          View activity
+        </button>
+      </div>
 
       <dl className="detail-list">
         {rows.map((row) => (
@@ -98,7 +104,7 @@ export function RepositoryDetail({ repo, onClose, onOpenArchitecture }: Props) {
       )}
 
       <p className="note">
-        Branches, commits, pull requests and more will have their own views in later phases.
+        Pull requests, issues and more will have their own views in later phases.
       </p>
     </aside>
   );

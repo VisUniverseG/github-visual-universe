@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+  githubBranchListEntrySchema,
   githubBranchSchema,
+  githubCommitSchema,
   githubDefaultBranchSchema,
   githubRepositorySchema,
   githubTreeEntrySchema,
   githubUserSchema,
   gitShaSchema,
+  parseBranchList,
+  parseCommitList,
   parseGitTree,
   parseInstallationRepositories,
 } from './index.js';
@@ -265,5 +269,140 @@ describe('parseGitTree', () => {
     ['a non-object', 'tree'],
   ])('rejects an envelope with %s', (_name, body) => {
     expect(() => parseGitTree(body)).toThrow();
+  });
+});
+
+const commit = (extra: Record<string, unknown> = {}) => ({
+  sha: SHA,
+  node_id: 'ignored',
+  commit: {
+    message: 'Fix the thing\n\nLonger explanation.',
+    author: { name: 'Ada', email: 'ada@example.com', date: '2026-10-01T10:00:00Z' },
+    committer: { name: 'Bot', email: 'bot@example.com', date: '2026-10-01T11:00:00Z' },
+  },
+  author: { login: 'ada', id: 1 },
+  committer: { login: 'web-flow' },
+  parents: [{ sha: 'b'.repeat(40) }],
+  ...extra,
+});
+
+describe('githubCommitSchema', () => {
+  it('reads the fields the Activity view shows', () => {
+    const parsed = githubCommitSchema.parse(commit());
+    expect(parsed.sha).toBe(SHA);
+    expect(parsed.commit.message).toBe('Fix the thing\n\nLonger explanation.');
+    expect(parsed.commit.author?.name).toBe('Ada');
+    expect(parsed.commit.author?.date).toBe('2026-10-01T10:00:00Z');
+    expect(parsed.commit.committer?.date).toBe('2026-10-01T11:00:00Z');
+    expect(parsed.author?.login).toBe('ada');
+    expect(parsed.parents).toHaveLength(1);
+  });
+
+  it('never lets an email address, or any unlisted field, through', () => {
+    const parsed = githubCommitSchema.parse(commit());
+    const text = JSON.stringify(parsed);
+    expect(text).not.toContain('example.com');
+    expect(text).not.toContain('@');
+    expect(text).not.toContain('node_id');
+    expect(text).not.toContain('web-flow');
+  });
+
+  it('treats a commit whose email matches no GitHub account (author: null) as having no login', () => {
+    const parsed = githubCommitSchema.parse(commit({ author: null }));
+    expect(parsed.author?.login).toBeUndefined();
+  });
+
+  it('needs only a well-formed sha and a commit object', () => {
+    const parsed = githubCommitSchema.parse({ sha: SHA, commit: {} });
+    expect(parsed.commit.message).toBeUndefined();
+    expect(parsed.commit.author?.name).toBeUndefined();
+    expect(parsed.parents).toBeUndefined();
+  });
+
+  it.each([
+    ['a malformed sha', commit({ sha: 'not-a-sha' })],
+    ['a missing sha', { commit: {} }],
+    ['a missing commit object', { sha: SHA }],
+    ['a non-object', 'commit'],
+  ])('rejects %s', (_name, body) => {
+    expect(githubCommitSchema.safeParse(body).success).toBe(false);
+  });
+
+  it('turns malformed optional fields into absent ones instead of failing', () => {
+    const parsed = githubCommitSchema.parse(
+      commit({ parents: 'many', author: 42, commit: { message: 7, author: 'x', committer: [] } }),
+    );
+    expect(parsed.parents).toBeUndefined();
+    expect(parsed.author?.login).toBeUndefined();
+    expect(parsed.commit.message).toBeUndefined();
+    expect(parsed.commit.author?.name).toBeUndefined();
+    expect(parsed.commit.committer?.date).toBeUndefined();
+  });
+});
+
+describe('parseCommitList', () => {
+  it('keeps readable commits and counts the ones it had to skip', () => {
+    const result = parseCommitList([
+      commit(),
+      { sha: 'bad' },
+      null,
+      commit({ sha: 'c'.repeat(40) }),
+    ]);
+    expect(result.commits.map((c) => c.sha)).toEqual([SHA, 'c'.repeat(40)]);
+    expect(result.skipped).toBe(2);
+  });
+
+  it('accepts an empty list', () => {
+    expect(parseCommitList([])).toEqual({ commits: [], skipped: 0 });
+  });
+
+  it.each([
+    ['an object', {}],
+    ['null', null],
+    ['a string', 'commits'],
+  ])('rejects a response that is %s rather than a list', (_name, body) => {
+    expect(() => parseCommitList(body)).toThrow();
+  });
+});
+
+describe('githubBranchListEntrySchema and parseBranchList', () => {
+  const branch = (extra: Record<string, unknown> = {}) => ({
+    name: 'main',
+    commit: { sha: SHA, url: 'https://api.github.com/ignored' },
+    protected: true,
+    ...extra,
+  });
+
+  it('reads the name, the head sha and the protected flag', () => {
+    expect(githubBranchListEntrySchema.parse(branch())).toEqual({
+      name: 'main',
+      commit: { sha: SHA },
+      protected: true,
+    });
+  });
+
+  it('treats a missing or malformed protected flag as unknown', () => {
+    expect(githubBranchListEntrySchema.parse(branch({ protected: undefined })).protected).toBe(
+      undefined,
+    );
+    expect(githubBranchListEntrySchema.parse(branch({ protected: 'yes' })).protected).toBe(
+      undefined,
+    );
+  });
+
+  it('skips and counts entries without a name or a well-formed head sha', () => {
+    const result = parseBranchList([
+      branch(),
+      branch({ name: '' }),
+      branch({ commit: { sha: 'zz' } }),
+      { name: 'x' },
+      branch({ name: 'feature/a-b' }),
+    ]);
+    expect(result.branches.map((b) => b.name)).toEqual(['main', 'feature/a-b']);
+    expect(result.skipped).toBe(3);
+  });
+
+  it('rejects a response that is not a list', () => {
+    expect(() => parseBranchList({ branches: [] })).toThrow();
   });
 });

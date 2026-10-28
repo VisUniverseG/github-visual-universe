@@ -90,8 +90,11 @@ installation, so any change is a deliberate, reviewed decision.
 
 This is the **intended** permission set. It lives in the GitHub App registration, which this
 repository does not contain, so it **cannot be verified from the code** and has not been checked
-with a live token. The code currently calls only user, installation, repository-list, branch and
-git-tree endpoints, so it does not yet use the Pull requests, Issues or Actions permissions.
+with a live token. The code currently calls only user, installation, repository-list, branch,
+branch-list, commit-list and git-tree endpoints. The commit-list and branch-list endpoints, used
+by the Activity view, are mock-tested only and have **not** been verified live, including which
+permission GitHub requires for them. The code does not use the Pull requests, Issues or Actions
+permissions.
 
 ### Private repository access
 
@@ -236,7 +239,13 @@ user's token**
   _(planned)_. **No such content is rendered today.** The web source contains no
   `dangerouslySetInnerHTML`, `innerHTML` or `eval` (found by search, not enforced by a lint rule).
   File and folder names from GitHub are shown as plain text, with control and bidirectional
-  characters made visible, and are never used in URLs _(implemented; mock-tested)_.
+  characters made visible, and are never used in URLs _(implemented; mock-tested)_. The same holds
+  for the activity view: commit subjects, author names and logins and branch names are untrusted,
+  shown as plain text (control, bidirectional and zero-width characters replaced, length capped),
+  and never used to build a URL, except that the default branch name is sent as an encoded `sha`
+  query parameter. Author email addresses and message bodies are dropped when the response is
+  parsed, and nothing from a response is echoed into an error message _(implemented;
+  mock-tested)_.
 - Per-user cache keys; the cache is cleared on sign-out _(planned)_. **No cache exists today**: the
   only data the app persists is the `sessionStorage` token and temporary sign-in state.
 
