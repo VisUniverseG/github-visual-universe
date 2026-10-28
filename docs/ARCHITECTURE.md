@@ -8,20 +8,20 @@ differ. `PRIVACY.md`, `SECURITY.md` and the Phase 0 assessment have been aligned
 
 ## Status
 
-| Component                          | Status                                                                               |
-| ---------------------------------- | ------------------------------------------------------------------------------------ |
-| npm workspaces monorepo            | ✅ Implemented                                                                       |
-| `packages/shared` (contracts)      | ✅ `/health`, auth-broker and GitHub response schemas (Zod, lenient optional fields) |
-| `apps/api` (Hono)                  | ✅ `GET /health`, `POST /auth/token`, `POST /auth/revoke`                            |
-| `apps/web` (React + Vite)          | ✅ Sign-in (PKCE), Overview dashboard, Architecture view, Disconnect; build-time CSP |
-| CI checks                          | ✅ Implemented (not yet run on GitHub)                                               |
-| Authentication design              | ✅ Decided (ADR 0001, amended after Phase 2)                                         |
-| GitHub authorization spike harness | ✅ Prepared, offline-tested. **Not yet run against a real GitHub App.**              |
-| GitHub App registration            | ✅ Created and installed. Credentials are configured locally only.                   |
-| Auth broker + sign-in (PKCE)       | ✅ Implemented; manually verified against real GitHub. Automated tests use mocks.    |
-| GitHub data layer (read-only)      | 🟡 Repository discovery, `GET /user`, branch head and file tree; the rest is later   |
-| Visualizations                     | 🟡 Overview, language chart and file-tree architecture done; the rest (Phases 7–10)  |
-| Deployment (Pages + Render)        | ⏳ Planned (Phase 11)                                                                |
+| Component                          | Status                                                                                                                                                                                    |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| npm workspaces monorepo            | ✅ Implemented                                                                                                                                                                            |
+| `packages/shared` (contracts)      | ✅ `/health`, auth-broker and GitHub response schemas (Zod, lenient optional fields)                                                                                                      |
+| `apps/api` (Hono)                  | ✅ `GET /health`, `POST /auth/token`, `POST /auth/revoke`                                                                                                                                 |
+| `apps/web` (React + Vite)          | ✅ Sign-in (PKCE), Overview dashboard, Architecture view, Disconnect; build-time CSP                                                                                                      |
+| CI checks                          | ✅ Implemented (not yet run on GitHub)                                                                                                                                                    |
+| Authentication design              | ✅ Decided (ADR 0001, amended after Phase 2)                                                                                                                                              |
+| GitHub authorization spike harness | ✅ Prepared, offline-tested. Only the anonymous checks `ANON-01` to `ANON-03` have been run live; **no account-dependent check has**.                                                     |
+| GitHub App registration            | 🟡 Reported by the maintainer as created and installed, with credentials kept locally. Not verifiable from the repository.                                                                |
+| Auth broker + sign-in (PKCE)       | ✅ Implemented and mock-tested. 🟡 Live use is **maintainer-reported only** (not reproducible from the repository); token revocation is not verified live. See [Known gaps](#known-gaps). |
+| GitHub data layer (read-only)      | 🟡 Repository discovery, `GET /user`, branch head and file tree; the rest is later                                                                                                        |
+| Visualizations                     | 🟡 Overview, language chart and file-tree architecture done; the rest (Phases 7–10)                                                                                                       |
+| Deployment (Pages + Render)        | ⏳ Planned (Phase 11)                                                                                                                                                                     |
 
 ## Repository layout
 
@@ -161,13 +161,13 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
 
 ### Security properties and non-properties
 
-| Property                                                         | Status                                                                             |
-| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| One user cannot read another user's private data through the app | Relies on GitHub's user/app intersection. Verified by the harness, **not yet run** |
-| The broker keeps no user credentials at rest                     | By design (stateless, no database, no disk)                                        |
-| The broker cannot read repository data                           | By design (holds no installation token, PAT or app private key)                    |
-| A compromised broker deployment cannot capture tokens            | **Not guaranteed.** It sees tokens in transit. Mitigated, not eliminated           |
-| The token is safe from script running on our origin              | **Not guaranteed**, with `sessionStorage` or with memory-only storage              |
+| Property                                                         | Status                                                                                                             |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| One user cannot read another user's private data through the app | Relies on GitHub's user/app intersection. To be checked by the harness; **not yet run** (an assumption until then) |
+| The broker keeps no user credentials at rest                     | By design (stateless, no database, no disk)                                                                        |
+| The broker cannot read repository data                           | By design (holds no installation token, PAT or app private key)                                                    |
+| A compromised broker deployment cannot capture tokens            | **Not guaranteed.** It sees tokens in transit. Mitigated, not eliminated                                           |
+| The token is safe from script running on our origin              | **Not guaranteed**, with `sessionStorage` or with memory-only storage                                              |
 
 ## Current implementation details
 
@@ -317,7 +317,8 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
   Phase 3. It is **not part of the product** and is not built or deployed.
 - It is read-only by construction (only `GET`, credential-free `OPTIONS` and GraphQL queries to
   `api.github.com`), accepts only GitHub App user tokens supplied through the environment, and never
-  prints tokens or repository names. It is covered by offline tests against a mock server.
+  prints tokens or repository names. It is covered by offline tests against a mock server, which run
+  in CI as part of `npm test` (`npm run test:spikes`) and use no credentials.
 - Plan, runbook and limits: [`docs/spikes/github-auth-harness.md`](./spikes/github-auth-harness.md).
 
 ## Conventions
@@ -340,10 +341,22 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
 - GitHub Pages serves static files, so the production callback
   (`.../github-visual-universe/auth/callback/`) needs a real `auth/callback/index.html` (or a
   `404.html` fallback) before deployment. This is deployment work that has not been done.
-- Sign-in and repository discovery have been run by the maintainer against real GitHub (personal,
-  private and organization repositories were listed). Automated tests still use mocks only. Not yet
-  verified live: the dashboard's extra repository fields (read from GitHub's documented response),
-  `GET /user`, and token revocation.
+- **Live verification status.** Terms: _recorded live evidence_ is in this repository;
+  _maintainer-reported_ means the maintainer says it was done and the repository cannot reproduce or
+  confirm it; _mock-tested_ means automated tests with fake GitHub responses, which show the code
+  behaves as designed but say nothing about real GitHub.
+  - _Recorded live evidence:_ only the anonymous harness checks `ANON-01` to `ANON-03` (CORS
+    preflight responses and exposed headers, inspected from Node), as in
+    [ADR 0001](./adr/0001-auth-broker-and-direct-github-access.md#implementation-status-2026-10-28).
+  - _Maintainer-reported:_ sign-in and repository discovery against real GitHub (personal, private
+    and organization repositories were listed), and, separately, opening the architecture view of
+    one small repository (see "Architecture view limits"). These are separate reports. **No evidence
+    covers the whole flow (sign-in, then dashboard, then architecture view) as one verified live
+    run.**
+  - _Mock-tested only:_ every automated test uses mocks.
+  - _Not verified live:_ the dashboard's extra repository fields (read from GitHub's documented
+    response), `GET /user`, and token revocation. Account-dependent behaviour (user isolation,
+    private-repository access, U1 to U11) is also unverified.
 - **Dashboard limits:** language is a repository count by primary language, not bytes. Branches,
   commits, pull requests, issues and workflows have no views yet. The 30-page cap means an
   account with more than about 3,000 accessible repositories shows partial statistics until
@@ -353,8 +366,9 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
   with nothing loaded in advance. The repository stays **Partial** until every folder has been
   listed, and a folder that GitHub itself cuts off can never be completed. Sizes are the sizes of
   Git blobs (a Git LFS file shows its small pointer size), and committed build output or vendored
-  folders will dominate a size view. Verified live by the maintainer on one small repository
-  (branch and tree requests, 65 entries, not truncated). Not yet verified live: lazy loading of a
+  folders will dominate a size view. Reported by the maintainer as run live on one small
+  repository (branch and tree requests, 65 entries, not truncated); this is not recorded evidence and
+  the repository cannot reproduce it. Not yet verified live: lazy loading of a
   large repository (a truncated tree, per-folder listings and their rate limits), an empty
   repository, a branch name containing `/`, an organization repository, submodules and symlinks
   (covered by mocked tests only).

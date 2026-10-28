@@ -1,8 +1,19 @@
 # GitHub authorization spike harness: test plan and runbook
 
-Status: **prepared, not yet run against a real GitHub App.** No GitHub App exists, no credentials were requested or used, and no authentication flow is implemented in the product.
+Status: **prepared. Only the anonymous checks have been run against real GitHub. The account and isolation checks (`ACC-*`, `ISO-*`) have not been run**, because they need real user tokens and fixture repositories that this repository does not contain. The product itself now implements GitHub App sign-in (see the table below), so the harness is no longer a prerequisite for writing authentication code. It remains the plan for gathering evidence on the open questions.
 
 Code: `scripts/spikes/github-auth/` (zero dependencies, Node 24). Run with `node scripts/spikes/github-auth/run.mjs --help`.
+
+Offline tests (no credentials, no internet): `npm run test:spikes`. They also run as part of `npm test` and therefore in CI.
+
+## Current state at a glance
+
+| Level                                         | What it covers                                                                                                                                                                                                                                                                                                                   |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Implemented in the product                    | GitHub App sign-in with PKCE (S256) through the stateless Hono auth broker in `apps/api` (`/auth/token`, `/auth/revoke`), and read-only REST repository discovery and architecture views in `apps/web`. Details: [ARCHITECTURE.md](../ARCHITECTURE.md).                                                                          |
+| Mocked or local test coverage                 | The 44 harness tests (a loopback fake of `api.github.com`; run in CI) and the product's Vitest suites (mocked `fetch`). They show that the code behaves as designed. They do not show how real GitHub behaves.                                                                                                                   |
+| Verified live against GitHub                  | Harness checks `ANON-01` to `ANON-03` (anonymous, no credentials; see section 11). The maintainer's live sign-in and repository-discovery runs are reported in [ARCHITECTURE.md](../ARCHITECTURE.md); they are documented there and not re-verified here.                                                                        |
+| Still unverified live (not run, or no result) | `ACC-01` to `ACC-12` and `ISO-01` to `ISO-05`; U1 to U11 (statuses unchanged, see [ADR 0001](../adr/0001-auth-broker-and-direct-github-access.md#unresolved-behaviour-not-yet-verified)); token revocation; large-repository lazy loading; private and organization isolation with real accounts; real browser CORS enforcement. |
 
 ## 1. Decisions this plan is built on
 
@@ -29,6 +40,8 @@ Code: `scripts/spikes/github-auth/` (zero dependencies, Node 24). Run with `node
 | The target origin cannot be changed from the CLI or environment                                             | `run.mjs` (only tests can inject one) |
 
 `--dry-run` prints the exact request plan and what would be skipped, and makes **no** requests.
+
+**Offline tests versus live runs.** The 44 tests (`npm run test:spikes`) only talk to loopback servers on `127.0.0.1` that they start themselves, and they pass fake tokens and fixture names to the harness directly. They never read `GVU_SPIKE_*` or any other variable from the process environment (only the CLI entry point, `run.mjs`, does), so CI neither needs nor accepts real tokens or fixture repositories. CI never runs `run.mjs` and makes no live GitHub requests. Live runs stay manual, local and outside CI.
 
 ## 3. What the harness tests
 
@@ -170,4 +183,13 @@ Ambiguous or unexpected results are recorded as evidence, never silently reinter
 ## 11. Verification already done (offline)
 
 - 44 tests with a loopback mock GitHub that echoes tokens in headers and bodies: read-only behaviour, no token leakage into any rendering, redirect refusal, halt on `401`, halt on rate limit, request budget, per-check ceilings, `CRITICAL` detection for both leak types, fixture-error handling, dependency selection, dry run with zero requests.
-- One anonymous live run (no credentials): `ANON-01` passed for all four preflights. The anonymous rate limit (60 per hour per IP, partly used by earlier Phase 2 probing) halted the run at `ANON-02`, which is the intended safety stop. `ANON-02` and `ANON-03` need a re-run after the limit resets.
+- These tests run in CI (inside `npm test`, via `npm run test:spikes`). They use no credentials and no internet access.
+
+## 12. Verified live
+
+Only anonymous (no credentials) harness checks have been run against real GitHub:
+
+- First run (Phase 2): `ANON-01` passed for all four preflights. The anonymous rate limit (60 per hour per IP, partly used by earlier probing) halted the run at `ANON-02`, which is the intended safety stop.
+- Re-run on 2026-10-28, 7 requests: `ANON-01`, `ANON-02` and `ANON-03` all passed. All four preflights returned 204 and allowed `authorization`, `content-type` and `if-none-match`. A public repository response exposed `etag`, `link`, `retry-after`, `x-ratelimit-remaining` and `x-github-sso`. `/user` returned 401 without a token, and the anonymous core limit was 60. This is header inspection from Node, not browser-enforced CORS.
+
+Nothing else in this document has been verified live. `ACC-*` and `ISO-*` have not been run, and U1 to U11 keep the statuses recorded in ADR 0001.

@@ -1,8 +1,12 @@
 # ADR 0001: Thin auth broker plus direct-to-GitHub data access
 
-- **Status:** Accepted (design), **amended 2026-10-27** after the Phase 2 technical spike. Not yet
-  implemented; `apps/api` currently only serves `/health`.
-- **Date:** 2026-10-27 (original), amended 2026-10-27
+- **Status:** Accepted (design), **amended 2026-10-27** after the Phase 2 technical spike.
+  **Implemented in part** (noted 2026-10-28): the broker, PKCE sign-in, the read-only GitHub client,
+  repository discovery and the architecture view exist and are tested with mocked GitHub responses.
+  Live verification is incomplete and several decisions are not yet implemented. See
+  [Implementation status (2026-10-28)](#implementation-status-2026-10-28). The decisions below are
+  unchanged.
+- **Date:** 2026-10-27 (original), amended 2026-10-27, implementation status added 2026-10-28
 
 ## Context
 
@@ -145,8 +149,9 @@ These supersede the corresponding statements in the original ADR and in the
 
 - **XSS is the main threat to the access token.** `sessionStorage` is readable by any script on our
   origin. The mitigations in Decision 11 reduce the likelihood, and the token's limits reduce the
-  impact: it is read-only, lasts at most 8 hours, and is revoked on logout. They do not remove the
-  risk. Memory-only storage would not remove it either (see corrections).
+  impact: it is read-only, lasts at most 8 hours, and is cleared from the browser on logout, where
+  revocation is requested through the broker (confirmed only when GitHub answers 204; not yet
+  verified live; see Implementation status). They do not remove the risk. Memory-only storage would not remove it either (see corrections).
 - **Why `sessionStorage` and not memory-only (D1).** Memory-only would force a new token, and a
   possible broker wake-up, on every reload, and it could trip token-minting limits (U9). This is
   **our inference, not a documented GitHub fact.** `sessionStorage` is per tab, is cleared when the
@@ -177,47 +182,187 @@ These supersede the corresponding statements in the original ADR and in the
 | Broker-held or sealed refresh tokens             | Introduces credentials at rest or a token-use oracle; breaks the stateless design         |
 | Device flow                                      | Enables phishing-style impersonation of the app; GitHub advises disabling it              |
 
+## Implementation status (2026-10-28)
+
+This section records what the repository contains today. It does **not** change any decision above
+and does not resolve any of U1 to U11. Decisions are numbered as in the Decision section.
+
+Terms:
+
+- **Implemented:** present in the code, checked against the source.
+- **Mock or local tests:** covered by automated tests that use fake GitHub responses or run locally.
+  This shows the code behaves as designed. It is not evidence about real GitHub.
+- **Verified live:** observed against real GitHub and recorded in this repository.
+- **Assumption:** depends on GitHub behaviour or settings that are not verified.
+
+### Verified live, as recorded
+
+- Only the anonymous harness checks `ANON-01` to `ANON-03` (CORS preflight responses and exposed
+  response headers, inspected from Node). See the
+  [harness document](../spikes/github-auth-harness.md#12-verified-live).
+- [ARCHITECTURE.md](../ARCHITECTURE.md) reports that the maintainer ran sign-in and repository
+  discovery against real GitHub (personal, private and organization repositories were listed) and
+  opened the architecture view of one small repository. These are documented claims that cannot be
+  reproduced from this repository, and they are not treated here as recorded test evidence. Token
+  revocation, large-repository lazy loading and the other items below have **not** been verified
+  live.
+
+### By decision
+
+- **Decisions 1 to 3 (GitHub App, permissions, settings).** The app registration is not part of the
+  repository, so none of this is verifiable from the code. **Assumption.** The code calls only user,
+  installation, repository-list, branch and git-tree endpoints, so it uses the Metadata and Contents
+  permissions. Pull requests, Issues and Actions are requested by design but unused today.
+- **Decision 4 (auth broker).** _Implemented:_ `apps/api` (Hono) exposes `POST /auth/token` and
+  `POST /auth/revoke`, plus an unauthenticated `GET /health` that the pre-warm in Decision 10 uses.
+  Token exchange returns only `{access_token, expires_in}`: the broker builds its response
+  explicitly, so the refresh token is dropped, and it refuses a response without a positive
+  integer `expires_in`. Revocation calls `DELETE /applications/{client_id}/token` with Basic auth
+  and reports success only when GitHub answers 204. It is stateless and writes nothing to disk.
+  _Mock tests:_ yes, with a mocked GitHub. _Verified live:_ no (see above). The real token
+  response shape and the real revocation call have not been observed in recorded evidence.
+- **Decision 5.** _Implemented:_ the broker has no installation-token, PAT or private-key
+  configuration, makes no GitHub data calls, and its only outbound calls are the token exchange and
+  the revocation. _Mock tests:_ partly (credential-handling and no-leak tests).
+- **Decision 6 (broker controls).** _Implemented and mock-tested:_ exact `Origin` allow-list, exact
+  `redirect_uri` allow-list, 4 KB body limit, JSON-only content type, strict request schemas, a
+  10-second upstream timeout, `Cache-Control: no-store`, and no logging of request or response
+  content. _Not implemented:_ see "Decisions not yet implemented" below.
+- **Decision 7 (direct browser access).** _Implemented, REST only:_ `githubGet` in
+  `apps/web/src/github/client.ts` is the only code that calls `api.github.com`. It sends only
+  `GET`, refuses any other origin, sends no cookies and does not follow redirects. _Mock tests:_
+  each call site asserts GET requests to `api.github.com` only. There is no lint rule or global test
+  forbidding other methods. GraphQL is not implemented.
+- **Decision 8 (token storage).** _Implemented and mock-tested:_ the access token only, in
+  `sessionStorage`; a token within 60 seconds of expiry counts as expired; the refresh token never
+  reaches the browser. On logout the browser clears the token first, then asks the broker to revoke
+  it. The UI reports revocation only when GitHub confirmed it and warns otherwise. If revocation
+  fails the token stays valid until it expires. The 8-hour lifetime is GitHub's documented figure and
+  has not been measured by us.
+- **Decision 9 (`state` and PKCE).** _Implemented and mock-tested:_ `state` and the verifier come
+  from `crypto.getRandomValues`; the S256 challenge is checked against the RFC 7636 test vector;
+  the pending record is removed when it is read, so a callback is single-use; it expires after 10
+  minutes; `state` is compared before the code is sent to the broker; the callback URL is replaced
+  immediately. _Not implemented:_ `returnTo`. _Assumption:_ that GitHub enforces the
+  `code_verifier` for a GitHub App.
+- **Decision 10 (pre-warm).** _Implemented and mock-tested:_ the SPA calls `GET /health` (60-second
+  timeout) before redirecting and does not redirect if the API is unreachable.
+- **Decision 11 (XSS protection).** _Implemented:_ a `<meta>` Content Security Policy and a
+  `no-referrer` policy are injected into the built `index.html` only; there are no inline or
+  third-party scripts; dependencies are exact-pinned; tokens are never placed in URLs, logs or error
+  messages (the web app has no logging calls). _Tests:_ the policy string is unit-tested, and
+  inspecting the `index.html` from a local `npm run build` shows it injected (no automated test
+  covers the injection); enforcement in real browsers is untested. _Not applicable yet:_
+  sanitized rendering, because no repository text content is rendered.
+- **Decision 12 (private repository access).** _Partly implemented:_ discovery uses the installation
+  endpoints, and an empty result explains that the app lists only repositories it is installed on.
+  The architecture view's 403 message mentions installation. `X-GitHub-SSO` is not detected, so
+  SAML-protected organizations get only the generic forbidden message. _Mock tests:_ yes.
+  _Verified live:_ no, beyond the maintainer's reported listing. Whether the user-token
+  intersection model holds is an **assumption** (harness `ACC-04`, `ACC-05` and `ISO-*` not run).
+- **Decision 13 (Setup URL).** _Not implemented._
+
+### Repository discovery and architecture view
+
+These are not described by the decisions above. Both are **implemented and mock-tested only** as far
+as recorded evidence goes. Their behaviour against real GitHub (large repositories, rate limits,
+organization repositories) is **not verified**.
+
+- **Discovery.** `GET /user/installations` and `GET /user/installations/{id}/repositories`, plus
+  `GET /user` for the signed-in login. Entries are parsed leniently, one at a time, and unreadable
+  ones are counted as skipped. Totals are labelled complete only when nothing was skipped and every
+  page was read. Pagination auto-loads up to 30 pages and offers "Load more" beyond that; the
+  installation list is capped at 10 pages.
+- **Architecture view.** `GET /repos/{owner}/{repo}/branches/{branch}` for the branch head, then
+  `GET /repos/{owner}/{repo}/git/trees/{sha}`. The default branch is used and branch names are
+  percent-encoded. If GitHub reports the recursive listing as truncated, the cut-off listing is
+  discarded and the root is listed non-recursively ("lazy mode"). Folders then load on demand, one
+  non-recursive request each, by tree SHA.
+- **Loader behaviour (mock tests only).** At most four concurrent requests with the rest queued;
+  one shared request per folder; no automatic retry; blocking of further requests until the reset
+  time GitHub reports after a rate limit; a 401 aborts everything in flight and calls back once;
+  disposal on unmount aborts in-flight requests. Figures stay lower bounds, shown as partial, until
+  every folder is listed. File names are displayed as plain text with control and bidirectional
+  characters made visible.
+- **Not verified live:** lazy loading of a real large repository, rate-limit behaviour under real
+  limits, empty repositories, branch names containing `/` against our own code, organization
+  repositories, and submodules and symlinks in our own code.
+
+### Decisions not yet implemented
+
+The decision text above stays as the requirement. The code does not yet meet these parts of it:
+
+- **Per-client rate limiting in the broker** (Decision 6). `/auth/token` and `/auth/revoke` have no
+  per-client limits. It is required before any public deployment.
+- **Per-request logging** (Decision 6). The broker logs no method, path, status or request id. It
+  logs only fixed reason strings for failed exchanges and revocations.
+- **GraphQL** (Decision 7). Only REST is implemented.
+- **`returnTo` restricted to internal paths** (Decision 9). There is no `returnTo` feature.
+- **Setup URL and `installation_id` handling** (Decisions 12 and 13). No code handles the Setup URL.
+- **Sanitized rendering of repository content** (Decision 11). No README, issue or Markdown content
+  is rendered yet. The web source has no HTML injection sinks (found by search, not enforced by a
+  lint rule).
+- **Deployment and the cache.** Nothing is deployed, and no per-user cache exists, so cache keys
+  and clearing on logout are still design intent.
+
 ## Unresolved behaviour (not yet verified)
 
 These come from the Phase 2 report and must be settled with a real development app. None of them is
 assumed in the design above. Evidence is gathered by the
 [spike harness](../spikes/github-auth-harness.md) (U1–U3, U7, U8) or by manual checks (the rest).
 
-| ID  | Open question                                                                                                           | How it will be resolved                          |
-| --- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| U1  | Does `GET /user/repos` with a user token list the user's public repos where the app is **not** installed?               | Harness `ACC-04`, `ACC-08`                       |
-| U2  | What private contribution detail is visible to a GitHub App user token (GraphQL)?                                       | Harness `ACC-11`                                 |
-| U3  | Does a token issued **before** installation see newly installed repos without re-authorizing?                           | Harness `ACC-02`, `ACC-03` (before and after)    |
-| U4  | Does the app registration offer wildcard callback matching? (It must stay off.)                                         | Manual (settings page)                           |
-| U5  | Is a loopback IP (`127.0.0.1`) callback with a variable port accepted for GitHub Apps? (Documented for OAuth Apps only) | Manual authorize test                            |
-| U6  | Default response format and error semantics of the web-flow token endpoint. (Device flow returns errors as HTTP 200.)   | Manual, then Phase 3 broker tests                |
-| U7  | Actions endpoints on public repos without installation; workflow file contents via Contents read                        | Harness `ACC-06`, `ACC-08`                       |
-| U8  | `X-GitHub-SSO` behaviour for **app** tokens (documented for PATs only)                                                  | Harness `ACC-12`, needs an SSO organization      |
-| U9  | Per-user token-minting limits for GitHub Apps (documented for OAuth Apps: 10 tokens and 10 per hour)                    | Observed passively only; not probed deliberately |
-| U10 | Authorization code lifetime for GitHub Apps (OAuth Apps: 10 minutes)                                                    | Manual, then Phase 3 broker tests                |
-| U11 | GitHub Pages hostname casing and query-string preservation on the callback path                                         | When Pages is enabled (Phase 11 deploy step)     |
+As of 2026-10-28 **none of U1 to U11 is resolved** by the evidence recorded in this repository. The
+only harness checks run live are the anonymous ones, `ANON-01` to `ANON-03`; see the
+[harness document](../spikes/github-auth-harness.md#12-verified-live). The questions and their
+statuses below are unchanged.
+
+| ID  | Open question                                                                                                           | How it will be resolved                                              |
+| --- | ----------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| U1  | Does `GET /user/repos` with a user token list the user's public repos where the app is **not** installed?               | Harness `ACC-04`, `ACC-08`                                           |
+| U2  | What private contribution detail is visible to a GitHub App user token (GraphQL)?                                       | Harness `ACC-11`                                                     |
+| U3  | Does a token issued **before** installation see newly installed repos without re-authorizing?                           | Harness `ACC-02`, `ACC-03` (before and after)                        |
+| U4  | Does the app registration offer wildcard callback matching? (It must stay off.)                                         | Manual (settings page)                                               |
+| U5  | Is a loopback IP (`127.0.0.1`) callback with a variable port accepted for GitHub Apps? (Documented for OAuth Apps only) | Manual authorize test                                                |
+| U6  | Default response format and error semantics of the web-flow token endpoint. (Device flow returns errors as HTTP 200.)   | Manual; the broker's mocked tests only encode the current assumption |
+| U7  | Actions endpoints on public repos without installation; workflow file contents via Contents read                        | Harness `ACC-06`, `ACC-08`                                           |
+| U8  | `X-GitHub-SSO` behaviour for **app** tokens (documented for PATs only)                                                  | Harness `ACC-12`, needs an SSO organization                          |
+| U9  | Per-user token-minting limits for GitHub Apps (documented for OAuth Apps: 10 tokens and 10 per hour)                    | Observed passively only; not probed deliberately                     |
+| U10 | Authorization code lifetime for GitHub Apps (OAuth Apps: 10 minutes)                                                    | Manual; the broker's mocked tests only encode the current assumption |
+| U11 | GitHub Pages hostname casing and query-string preservation on the callback path                                         | When Pages is enabled (Phase 11 deploy step)                         |
 
 Also open:
 
 - **Real 304 and rate-limit cost** for conditional requests (harness `ACC-09`). Headers are exposed 🔬,
   but behaviour with a real token is untested.
-- **Browser CORS enforcement.** Node cannot enforce it; verified in the Phase 3 web module.
-- **Refresh-token rotation and revocation** against real GitHub. Both need the client secret, so they
-  are tested with a mocked GitHub in Phase 3 and then once against a development app.
+- **Browser CORS enforcement.** **Not yet verified.** Node cannot enforce it, and the harness only
+  inspects headers. The web module exists, but no browser-based CORS test or result is recorded. The
+  maintainer's reported local live discovery run would be indirect evidence for the
+  `http://localhost:5173` origin only; the GitHub Pages origin is untested.
+- **Token revocation against real GitHub.** The broker's revocation call and the web app's handling
+  are tested with a mocked GitHub only. A live run with a test account's own token has not
+  happened.
+- **Refresh-token rotation.** Not exercised by this design: the broker discards the refresh token
+  and the product never uses one (D1). Its discard is mock-tested, and the real token response has
+  not been observed in recorded evidence. This becomes relevant only if refresh tokens are ever
+  adopted.
 - **The `sessionStorage` trade-off** (D1) is a design judgement, not an API fact.
 
 ## Documentation alignment
 
-`PRIVACY.md`, `SECURITY.md` and `docs/phase-0-assessment.md` have been aligned with this ADR and
-with [ARCHITECTURE.md](../ARCHITECTURE.md). The Phase 0 assessment is kept as a historical record,
-with corrected passages marked _(amended)_. If any of these documents ever differs from this ADR,
-this ADR takes precedence.
+`PRIVACY.md`, `SECURITY.md` and `docs/phase-0-assessment.md` were aligned with this ADR and with
+[ARCHITECTURE.md](../ARCHITECTURE.md) on 2026-10-27. Since then `SECURITY.md` was rewritten
+(2026-10-28) to describe the implemented controls, their test evidence and what is still
+unverified. `PRIVACY.md` has not been re-audited against the code. The Phase 0 assessment is kept
+as a historical record, with corrected passages marked _(amended)_; it still contains superseded
+statements (for example, it describes a lint rule enforcing the read-only wrapper that does not
+exist, and its roadmap table predates the implementation). If any of these documents ever differs
+from this ADR, this ADR takes precedence.
 
 ## Revisit when
 
 - GitHub ships SPA support for GitHub Apps (`github/roadmap#1153`): the broker could be removed.
 - Render's free-tier terms change.
-- Phase 3 spike results contradict any item in the unresolved table.
+- Spike or live verification results contradict any item in the unresolved table.
 - A feature needs a permission outside D2, which would require re-approval at every installation.
 
 ## References
