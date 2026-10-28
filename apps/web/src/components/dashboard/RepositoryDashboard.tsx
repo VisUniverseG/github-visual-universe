@@ -10,6 +10,7 @@ import {
 import { REPOSITORY_MESSAGES } from '../../dashboard/messages.ts';
 import { computeStats, languageDistribution } from '../../dashboard/stats.ts';
 import { useRepositoryDataset } from '../../dashboard/useRepositoryDataset.ts';
+import { ActivityView } from '../activity/ActivityView.tsx';
 import { ArchitectureView } from '../architecture/ArchitectureView.tsx';
 import { DataStatus } from './DataStatus.tsx';
 import { FilterBar, type LanguageOption } from './FilterBar.tsx';
@@ -17,6 +18,9 @@ import { LanguageChart } from './LanguageChart.tsx';
 import { RepositoryCard } from './RepositoryCard.tsx';
 import { RepositoryDetail } from './RepositoryDetail.tsx';
 import { StatsGrid } from './StatsGrid.tsx';
+
+/** The view open over the dashboard: one kind at a time, for one repository. */
+type OpenView = { readonly kind: 'architecture' | 'activity'; readonly repoId: number } | null;
 
 interface Props {
   readonly accessToken: string;
@@ -37,10 +41,11 @@ export function RepositoryDashboard({ accessToken, onUnauthorized }: Props) {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const returnFocusId = useRef<number | null>(null);
-  // The repository whose architecture is open. The dashboard stays mounted (just hidden) so its
-  // loaded data, filters and selection survive going there and back.
-  const [architectureId, setArchitectureId] = useState<number | null>(null);
-  const returnToArchitectureButton = useRef(false);
+  // The view that is open over the dashboard, and the repository it is about. The dashboard stays
+  // mounted (just hidden) so its loaded data, filters and selection survive going there and back.
+  const [openView, setOpenView] = useState<OpenView>(null);
+  // Which button opened the view, so focus can go back to it.
+  const returnFocusTo = useRef<'architecture' | 'activity' | null>(null);
 
   // Statistics and the chart always describe the whole loaded dataset, never the filtered view
   // and never just the latest page.
@@ -75,22 +80,21 @@ export function RepositoryDashboard({ accessToken, onUnauthorized }: Props) {
     }
   }, [selectedId]);
 
-  const architectureRepo =
-    architectureId === null
-      ? null
-      : (data.items.find((item) => item.id === architectureId) ?? null);
+  const viewRepo =
+    openView === null ? null : (data.items.find((item) => item.id === openView.repoId) ?? null);
 
-  // Back from the architecture view: focus the button that opened it.
+  // Back from a view: focus the button that opened it.
   useEffect(() => {
-    if (architectureId === null && returnToArchitectureButton.current) {
-      returnToArchitectureButton.current = false;
-      document.querySelector<HTMLElement>('[data-architecture-button]')?.focus();
+    if (openView === null && returnFocusTo.current !== null) {
+      const selector = `[data-${returnFocusTo.current}-button]`;
+      returnFocusTo.current = null;
+      document.querySelector<HTMLElement>(selector)?.focus();
     }
-  }, [architectureId]);
+  }, [openView]);
 
-  const closeArchitecture = () => {
-    returnToArchitectureButton.current = true;
-    setArchitectureId(null);
+  const closeView = () => {
+    returnFocusTo.current = openView?.kind ?? null;
+    setOpenView(null);
   };
 
   const closeDetail = () => {
@@ -107,7 +111,7 @@ export function RepositoryDashboard({ accessToken, onUnauthorized }: Props) {
 
   return (
     <>
-      <div className="dashboard" hidden={architectureRepo !== null}>
+      <div className="dashboard" hidden={viewRepo !== null}>
         <DataStatus
           data={data}
           viewer={viewer}
@@ -169,7 +173,10 @@ export function RepositoryDashboard({ accessToken, onUnauthorized }: Props) {
                     repo={selected}
                     onClose={closeDetail}
                     onOpenArchitecture={() => {
-                      setArchitectureId(selected.id);
+                      setOpenView({ kind: 'architecture', repoId: selected.id });
+                    }}
+                    onOpenActivity={() => {
+                      setOpenView({ kind: 'activity', repoId: selected.id });
                     }}
                   />
                 )}
@@ -179,13 +186,22 @@ export function RepositoryDashboard({ accessToken, onUnauthorized }: Props) {
         )}
       </div>
 
-      {architectureRepo && (
+      {viewRepo && openView?.kind === 'architecture' && (
         <ArchitectureView
-          key={architectureRepo.id}
-          repo={architectureRepo}
+          key={`architecture:${String(viewRepo.id)}`}
+          repo={viewRepo}
           accessToken={accessToken}
           onUnauthorized={onUnauthorized}
-          onBack={closeArchitecture}
+          onBack={closeView}
+        />
+      )}
+      {viewRepo && openView?.kind === 'activity' && (
+        <ActivityView
+          key={`activity:${String(viewRepo.id)}`}
+          repo={viewRepo}
+          accessToken={accessToken}
+          onUnauthorized={onUnauthorized}
+          onBack={closeView}
         />
       )}
     </>

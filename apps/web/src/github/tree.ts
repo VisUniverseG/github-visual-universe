@@ -35,7 +35,7 @@ export interface TreeTarget extends RepositoryRef {
 }
 
 /** Throws before any request unless both names are well-formed. */
-function assertSafeRepository(repository: RepositoryRef): string {
+export function assertSafeRepository(repository: RepositoryRef): string {
   if (!SAFE_NAME.test(repository.owner) || !SAFE_NAME.test(repository.name)) {
     throw new GitHubApiError('invalid_response');
   }

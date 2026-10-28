@@ -242,6 +242,10 @@ a {
   color: var(--warn);
 }
 
+.chip-error {
+  color: var(--danger);
+}
+
 .badge {
   display: inline-block;
   padding: 0 0.5rem;
@@ -282,7 +286,8 @@ a {
   margin-bottom: 0.75rem;
 }
 
-.panel-head h2 {
+.panel-head h2,
+.panel-head h3 {
   font-size: 1.05rem;
 }
 
@@ -539,6 +544,12 @@ a {
   overflow-wrap: anywhere;
 }
 
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 .detail-list {
   margin: 0.75rem 0;
 }
@@ -586,20 +597,23 @@ a {
   display: none !important;
 }
 
-.architecture {
+.architecture,
+.activity {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
 }
 
-.architecture-head {
+.architecture-head,
+.activity-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem 1rem;
 }
 
-.architecture-head h2 {
+.architecture-head h2,
+.activity-head h2 {
   font-size: 1.15rem;
   overflow-wrap: anywhere;
 }
@@ -757,4 +771,76 @@ code {
   .entries td:nth-child(2) {
     display: none;
   }
+}
+
+/* ---------- Activity view ---------- */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.timeline-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.timeline-bar {
+  fill: var(--accent);
+  fill-opacity: 0.85;
+}
+
+.timeline-bar:hover {
+  fill-opacity: 1;
+}
+
+.timeline-axis {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+
+.timeline-text {
+  fill: var(--muted);
+  font-size: 12px;
+}
+
+.activity-table {
+  width: 100%;
+  margin-top: 0.75rem;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.activity-table th,
+.activity-table td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.activity-table thead th {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.activity-table .activity-subject {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.activity-table .num {
+  white-space: nowrap;
 }

@@ -179,3 +179,81 @@ export function parseGitTree(json: unknown): ParsedGitTree {
   }
   return { sha: envelope.sha, truncated: envelope.truncated, entries, skipped };
 }
+
+// ---------------------------------------------------------------------------------------------
+// Repository activity: commits and branches.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * One commit from `GET /repos/{owner}/{repo}/commits`. Only what the Activity view shows is read:
+ * the id, the message (the caller keeps its first line only), the author's name and date, the
+ * committer's date as a fallback, the GitHub account when the author's email matches one, and the
+ * parents (only their number is used, to tell merges). Author and committer **email addresses are
+ * never read**: unknown fields are stripped, so they cannot reach the UI.
+ *
+ * Everything except `sha` and the `commit` object is optional and becomes absent (`undefined`, or
+ * `null` if GitHub sent `null`: treat both as "not there") when missing or malformed. `author` (the
+ * GitHub account) is `null` in GitHub's answer when the commit's email matches no account.
+ */
+export const githubCommitSchema = z.object({
+  sha: gitShaSchema,
+  commit: z.object({
+    message: lenient(z.string()),
+    author: lenient(z.object({ name: lenient(z.string()), date: lenient(z.string()) })),
+    committer: lenient(z.object({ date: lenient(z.string()) })),
+  }),
+  author: lenient(z.object({ login: lenient(z.string()) })),
+  parents: lenient(z.array(z.unknown())),
+});
+export type GitHubCommit = z.infer<typeof githubCommitSchema>;
+
+/** One branch from `GET /repos/{owner}/{repo}/branches`: its name, head commit and protection. */
+export const githubBranchListEntrySchema = z.object({
+  name: z.string().min(1),
+  commit: z.object({ sha: gitShaSchema }),
+  protected: lenient(z.boolean()),
+});
+export type GitHubBranchListEntry = z.infer<typeof githubBranchListEntrySchema>;
+
+const listEnvelopeSchema = z.array(z.unknown());
+
+export interface ParsedCommitList {
+  readonly commits: GitHubCommit[];
+  /** Entries that could not be read and were left out. Callers must surface this. */
+  readonly skipped: number;
+}
+
+/**
+ * Parses a commit list one entry at a time, so a single unreadable entry does not discard the
+ * rest. Throws if the response is not a list at all.
+ */
+export function parseCommitList(json: unknown): ParsedCommitList {
+  const entries = listEnvelopeSchema.parse(json);
+  const commits: GitHubCommit[] = [];
+  let skipped = 0;
+  for (const raw of entries) {
+    const parsed = githubCommitSchema.safeParse(raw);
+    if (parsed.success) commits.push(parsed.data);
+    else skipped += 1;
+  }
+  return { commits, skipped };
+}
+
+export interface ParsedBranchList {
+  readonly branches: GitHubBranchListEntry[];
+  /** Entries that could not be read and were left out. Callers must surface this. */
+  readonly skipped: number;
+}
+
+/** Parses a branch list one entry at a time. Throws if the response is not a list at all. */
+export function parseBranchList(json: unknown): ParsedBranchList {
+  const entries = listEnvelopeSchema.parse(json);
+  const branches: GitHubBranchListEntry[] = [];
+  let skipped = 0;
+  for (const raw of entries) {
+    const parsed = githubBranchListEntrySchema.safeParse(raw);
+    if (parsed.success) branches.push(parsed.data);
+    else skipped += 1;
+  }
+  return { branches, skipped };
+}

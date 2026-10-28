@@ -13,14 +13,14 @@ differ. `PRIVACY.md`, `SECURITY.md` and the Phase 0 assessment have been aligned
 | npm workspaces monorepo            | ✅ Implemented                                                                                                                                                                            |
 | `packages/shared` (contracts)      | ✅ `/health`, auth-broker and GitHub response schemas (Zod, lenient optional fields)                                                                                                      |
 | `apps/api` (Hono)                  | ✅ `GET /health`, `POST /auth/token`, `POST /auth/revoke`                                                                                                                                 |
-| `apps/web` (React + Vite)          | ✅ Sign-in (PKCE), Overview dashboard, Architecture view, Disconnect; build-time CSP                                                                                                      |
+| `apps/web` (React + Vite)          | ✅ Sign-in (PKCE), Overview dashboard, Architecture view, Activity view, Disconnect; build-time CSP                                                                                       |
 | CI checks                          | ✅ Implemented (not yet run on GitHub)                                                                                                                                                    |
 | Authentication design              | ✅ Decided (ADR 0001, amended after Phase 2)                                                                                                                                              |
 | GitHub authorization spike harness | ✅ Prepared, offline-tested. Only the anonymous checks `ANON-01` to `ANON-03` have been run live; **no account-dependent check has**.                                                     |
 | GitHub App registration            | 🟡 Reported by the maintainer as created and installed, with credentials kept locally. Not verifiable from the repository.                                                                |
 | Auth broker + sign-in (PKCE)       | ✅ Implemented and mock-tested. 🟡 Live use is **maintainer-reported only** (not reproducible from the repository); token revocation is not verified live. See [Known gaps](#known-gaps). |
-| GitHub data layer (read-only)      | 🟡 Repository discovery, `GET /user`, branch head and file tree; the rest is later                                                                                                        |
-| Visualizations                     | 🟡 Overview, language chart and file-tree architecture done; the rest (Phases 7–10)                                                                                                       |
+| GitHub data layer (read-only)      | 🟡 Repository discovery, `GET /user`, branch head and file tree, commit and branch lists (mock-tested only); the rest is later                                                            |
+| Visualizations                     | 🟡 Overview, language chart, file-tree architecture and a per-repository activity timeline done; the rest (Phases 7–10)                                                                   |
 | Deployment (Pages + Render)        | ⏳ Planned (Phase 11)                                                                                                                                                                     |
 
 ## Repository layout
@@ -304,6 +304,47 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
     to build URLs, and `.`/`..` are plain names: nothing is resolved.
   - _Nothing is stored:_ the listing, including any folders loaded later, lives in memory while the
     view is open and is dropped when you go back. There is no cache.
+- **Activity view.** The detail panel's "View activity" button, next to "View architecture", opens a
+  read-only view of one repository's recent commits on its **default branch** and its branches.
+  The dashboard keeps its state (it is hidden, not unmounted) and one view is open at a time
+  (`{ kind: 'architecture' | 'activity'; repoId }`). It needs no backend change and no new
+  permission, dependency or storage: the browser calls `api.github.com` through the same `githubGet`
+  wrapper (GET only, no credentials, no redirects, 30 s timeout).
+  - _Requests (all GET, none until the view is opened):_
+    `GET /repos/{owner}/{repo}/commits?per_page=100[&sha={default branch}]` and
+    `GET /repos/{owner}/{repo}/branches?per_page=100`. Older pages are fetched by following
+    GitHub's `Link: rel="next"` URL, which must be on `api.github.com`. **These two endpoints are
+    mock-tested only and have not been verified live**, including which permission GitHub requires
+    for them. No GraphQL, no per-commit requests, no file contents.
+  - _Limits:_ 100 items per page and at most **5 pages (500 items) per list**. Further pages load
+    only when asked ("Load older commits" / "Load more branches"); nothing loads in advance or is
+    retried automatically. At the cap the view says GitHub has more that cannot be loaded here.
+  - _What is kept:_ per commit the first line of the message, author name and login, the author
+    date (the committer date if it is missing or unreadable), the SHA and the parent count (more
+    than one is shown as a merge); per branch its name, protected flag and head SHA. Author **email
+    addresses and message bodies are dropped** by the shared schema, never held. Text is shown
+    through the same sanitizer as file names (control, bidirectional and zero-width characters
+    replaced, 200-character cap).
+  - _Timeline:_ commits per UTC day, week (Monday start) or month, chosen from the span of the loaded
+    dates (up to 120 days: days; up to three years: weeks; else months), zero-filled. A date is not
+    plotted if it is missing, unreadable, before 2005-04-07 or later than tomorrow (UTC); those
+    commits stay in the table, are counted and reported. The chart is an SVG drawn with attributes
+    only (no inline `style`), with the table as its accessible equivalent. Dates are whatever the
+    commit says (an author can set any date), so the timeline is not evidence of when work was done.
+  - _Partial data:_ each list is labelled **Complete** (the last page was reached and nothing was
+    skipped), **Partial** (more exists, the cap was reached, or entries were unreadable and
+    skipped and counted), **Partial, with an error** (a later page failed) or **Failed**. The count
+    shown is "N loaded", never the repository's total.
+  - _Failures:_ commits and branches load and fail independently. A failed first page offers
+    "Try again" only when asking again could help. A failed later page keeps what was loaded and
+    retries the same page. An empty repository (409 on commits) is shown as empty. When GitHub
+    reports the rate limit is used up, no request is made until the reset time it gave. A 401 on
+    either list ends the session exactly once and cancels the other. Messages are fixed strings:
+    nothing from a response is echoed.
+  - _Known limit:_ if a commit is pushed while older pages are being loaded, the same commit can
+    appear on two pages; it is not de-duplicated.
+  - _Nothing is stored:_ everything lives in memory while the view is open and is dropped when you
+    go back. There is no cache, `localStorage` or IndexedDB.
 - **Disconnect** has two separately reported halves: the browser session is cleared immediately, and
   GitHub revocation is requested through the broker and reported as done **only if GitHub confirmed
   it**.
@@ -357,8 +398,8 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
   - _Not verified live:_ the dashboard's extra repository fields (read from GitHub's documented
     response), `GET /user`, and token revocation. Account-dependent behaviour (user isolation,
     private-repository access, U1 to U11) is also unverified.
-- **Dashboard limits:** language is a repository count by primary language, not bytes. Branches,
-  commits, pull requests, issues and workflows have no views yet. The 30-page cap means an
+- **Dashboard limits:** language is a repository count by primary language, not bytes. Pull
+  requests, issues and workflows have no views yet. The 30-page cap means an
   account with more than about 3,000 accessible repositories shows partial statistics until
   "Load more" is used. The installation list itself is capped at 10 pages.
 - **Architecture view limits:** default branch only. For a repository over GitHub's tree limit only
@@ -372,6 +413,11 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
   large repository (a truncated tree, per-folder listings and their rate limits), an empty
   repository, a branch name containing `/`, an organization repository, submodules and symlinks
   (covered by mocked tests only).
+- **Activity view limits:** default branch only, at most 500 commits and 500 branches per view, no
+  commit graph, no merge or pull-request relationships, no per-commit detail. **Not verified live:**
+  the commit and branch endpoints, their permission requirements, paging, a repository with merges,
+  one with more than 100 commits, one with many branches, an empty repository, an organization
+  repository, and a default branch name containing `/` (mock-tested only).
 - No `404.html`/router fallback yet (decision pending: `HashRouter` vs. fallback, spike item 10).
   The auth callback paths depend on this decision.
 - No deploy workflows, `render.yaml`, Dependabot config, or issue/PR templates.

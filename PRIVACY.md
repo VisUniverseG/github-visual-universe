@@ -17,15 +17,17 @@ no advertising. It is read-only: it can look at your GitHub data but never chang
 
 ## What data is involved (design and current implementation)
 
-| Data                                                         | Where it goes                                                                                                                    | Does our server store it?                                                    |
-| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Your GitHub sign-in (a one-time code)                        | Your browser → our small sign-in server (the "broker"; planned host: Render) → GitHub, once per sign-in                          | **Not stored.** It does pass through the server while signing in             |
-| Your GitHub access token                                     | GitHub → our broker → your browser. Kept in your browser tab's `sessionStorage`. Sent to `api.github.com`                        | **Not stored.** It passes through the broker once, and again if you sign out |
-| Your GitHub refresh token                                    | GitHub → our broker, which **discards it**. It is never sent to your browser and never stored                                    | **No**                                                                       |
-| Your repositories' metadata and your GitHub login            | Fetched **directly from GitHub to your browser** using your token. Kept in memory while the page is open; not written to storage | Our server is not involved, by design                                        |
-| Your repositories' file and folder names and sizes           | Fetched **directly from GitHub to your browser** when you open the architecture view. Kept in memory while that view is open     | Our server is not involved, by design                                        |
-| Commits, issues, pull requests, workflow runs, file contents | **Not read by the app today**                                                                                                    | Not applicable                                                               |
-| Cached GitHub responses                                      | Your browser's local storage (IndexedDB), per user _(planned; **no cache exists today**)_                                        | Only on your device; cleared on sign-out                                     |
+| Data                                                                 | Where it goes                                                                                                                       | Does our server store it?                                                    |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Your GitHub sign-in (a one-time code)                                | Your browser → our small sign-in server (the "broker"; planned host: Render) → GitHub, once per sign-in                             | **Not stored.** It does pass through the server while signing in             |
+| Your GitHub access token                                             | GitHub → our broker → your browser. Kept in your browser tab's `sessionStorage`. Sent to `api.github.com`                           | **Not stored.** It passes through the broker once, and again if you sign out |
+| Your GitHub refresh token                                            | GitHub → our broker, which **discards it**. It is never sent to your browser and never stored                                       | **No**                                                                       |
+| Your repositories' metadata and your GitHub login                    | Fetched **directly from GitHub to your browser** using your token. Kept in memory while the page is open; not written to storage    | Our server is not involved, by design                                        |
+| Your repositories' file and folder names and sizes                   | Fetched **directly from GitHub to your browser** when you open the architecture view. Kept in memory while that view is open        | Our server is not involved, by design                                        |
+| Commit subjects, author names and logins, commit dates, branch names | Fetched **directly from GitHub to your browser** when you open a repository's activity view. Kept in memory while that view is open | Our server is not involved, by design                                        |
+| Commit author email addresses, commit message bodies                 | **Never read by the app.** GitHub's response contains them, but the app discards them as it reads the response                      | Not applicable                                                               |
+| Issues, pull requests, workflow runs, file contents                  | **Not read by the app today**                                                                                                       | Not applicable                                                               |
+| Cached GitHub responses                                              | Your browser's local storage (IndexedDB), per user _(planned; **no cache exists today**)_                                           | Only on your device; cleared on sign-out                                     |
 
 **Repository overview.** After you sign in, your browser asks GitHub which repositories the app is
 installed on and reads, for each: its name, owner, visibility (public or private), description,
@@ -41,6 +43,20 @@ when you open it. The browser also receives GitHub's record of the branch's late
 app reads only the commit and tree identifiers from it. The listing is kept in memory only while the
 view is open (it is not written to storage) and is dropped when you go back; it is not cached,
 stored or sent to our server.
+
+**Commits and branches in the activity view.** When you open a repository's activity view, your
+browser reads, directly from GitHub and using your token, up to 500 of the latest commits on the
+repository's default branch and up to 500 of its branches. From each commit it keeps only the
+**first line of the message** (the subject), the **author's name and GitHub login**, the commit
+date, the commit's identifier and how many parents it has. From each branch it keeps the name,
+whether it is protected, and the identifier of its latest commit. It **never reads or keeps author
+email addresses or the rest of a commit message**, and it does not read file contents. Commit
+subjects can contain anything their authors typed, and names and logins identify the people who
+made the commits, who may not be you: you can see them because the repository is accessible to you,
+but be careful about screen-sharing or screenshots of this view. All of it is kept in memory only
+while the view is open (it is not written to storage), is dropped when you go back, and is not
+cached or sent to our server. Everything shown is only what has been loaded: the view labels a
+list **Partial** while more exists, and never presents the number loaded as the repository's total.
 
 ## What the backend sees
 
@@ -101,9 +117,11 @@ a live token.
 What the code does today:
 
 - The web app sends only `GET` requests to `api.github.com`. It reads your login, the list of
-  installations and their repositories, repository default branches, and branch heads and file
-  listings (see above). It does not yet use the pull request, issue or Actions permissions, so
-  those are requested by design but unused.
+  installations and their repositories, repository default branches, branch heads, file listings,
+  and commit and branch lists (see above). It does not yet use the pull request, issue or Actions
+  permissions, so those are requested by design but unused. The commit and branch lists rely on the
+  Contents (read) permission; which permission GitHub actually requires for them has **not** been
+  checked against a live token.
 - The code has no call that creates or edits issues, pull requests, repositories or any other
   GitHub data.
 - The only request that is not a read is made by the sign-in server when you sign out: it asks
