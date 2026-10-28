@@ -3,7 +3,9 @@ import {
   githubBranchSchema,
   githubDefaultBranchSchema,
   githubRepositorySchema,
+  githubTreeEntrySchema,
   githubUserSchema,
+  gitShaSchema,
   parseGitTree,
   parseInstallationRepositories,
 } from './index.js';
@@ -103,6 +105,55 @@ describe('githubUserSchema', () => {
 const SHA = 'a'.repeat(40);
 const SHA_256 = 'b'.repeat(64);
 
+describe('gitShaSchema', () => {
+  it.each([
+    ['a SHA-1', SHA],
+    ['a SHA-256', SHA_256],
+  ])('accepts %s', (_name, value) => {
+    expect(gitShaSchema.safeParse(value).success).toBe(true);
+  });
+
+  it.each([
+    ['empty', ''],
+    ['too short', 'a'.repeat(39)],
+    ['an in-between length', 'a'.repeat(41)],
+    ['too long', 'a'.repeat(65)],
+    ['upper case', 'A'.repeat(40)],
+    ['non-hex', 'g'.repeat(40)],
+    ['path-like', `../${'a'.repeat(37)}`],
+    ['with a query', `${'a'.repeat(38)}?x`],
+    ['with a trailing newline', `${SHA}\n`],
+    ['padded with spaces', ` ${SHA} `],
+    ['a number', 123],
+    ['null', null],
+  ])('rejects %s', (_name, value) => {
+    expect(gitShaSchema.safeParse(value).success).toBe(false);
+  });
+});
+
+describe('githubTreeEntrySchema', () => {
+  it('keeps a well-formed SHA', () => {
+    const parsed = githubTreeEntrySchema.parse({ path: 'src', type: 'tree', sha: SHA });
+    expect(parsed.sha).toBe(SHA);
+  });
+
+  it.each([
+    ['a path-like value', '../../user'],
+    ['an unexpected length', 'abc123'],
+    ['a number', 7],
+    ['null', null],
+  ])('treats %s as an absent SHA instead of failing the entry', (_name, sha) => {
+    const parsed = githubTreeEntrySchema.safeParse({ path: 'src', type: 'tree', sha });
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.sha ?? undefined).toBeUndefined();
+  });
+
+  it('treats a missing SHA as absent', () => {
+    const parsed = githubTreeEntrySchema.parse({ path: 'a', type: 'blob', size: 1 });
+    expect(parsed.sha).toBeUndefined();
+  });
+});
+
 describe('githubBranchSchema / githubDefaultBranchSchema', () => {
   it('reads the head commit and its tree, ignoring everything else', () => {
     const parsed = githubBranchSchema.parse({
@@ -187,6 +238,19 @@ describe('parseGitTree', () => {
     });
     expect(result.entries.map((e) => e.path)).toEqual(['ok']);
     expect(result.skipped).toBe(5);
+  });
+
+  it('drops a malformed entry SHA but keeps the entry', () => {
+    const result = parseGitTree({
+      sha: SHA,
+      truncated: false,
+      tree: [entry('src', 'tree', { sha: '../../user' }), entry('lib', 'tree')],
+    });
+    expect(result.skipped).toBe(0);
+    expect(result.entries.map((e) => [e.path, e.sha])).toEqual([
+      ['src', undefined],
+      ['lib', SHA],
+    ]);
   });
 
   it('reports a truncated listing', () => {

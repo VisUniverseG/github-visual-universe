@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatBytes, formatCount, formatDate, formatPercent } from './format.ts';
+import { boundedFigure, formatBytes, formatCount, formatDate, formatPercent } from './format.ts';
 
 describe('formatDate', () => {
   it('formats a valid ISO date', () => {
@@ -39,5 +39,23 @@ describe('formatBytes', () => {
 
   it('rolls over at the unit boundary instead of printing 1000 KB', () => {
     expect(formatBytes(999_999)).toBe('1 MB');
+  });
+});
+
+describe('boundedFigure', () => {
+  it('shows an exact figure as it is, an exact zero included', () => {
+    expect(boundedFigure(1500, formatBytes, true)).toBe('1.5 KB');
+    expect(boundedFigure(0, formatBytes, true)).toBe('0 B');
+    expect(boundedFigure(0, formatCount, true)).toBe('0');
+  });
+
+  it('marks an inexact positive figure as a lower bound', () => {
+    expect(boundedFigure(1500, formatBytes, false)).toBe('≥ 1.5 KB');
+    expect(boundedFigure(1, formatCount, false)).toBe('≥ 1');
+  });
+
+  it('shows an inexact zero as unknown, never as "≥ 0"', () => {
+    expect(boundedFigure(0, formatBytes, false)).toBe('—');
+    expect(boundedFigure(0, formatCount, false)).toBe('—');
   });
 });

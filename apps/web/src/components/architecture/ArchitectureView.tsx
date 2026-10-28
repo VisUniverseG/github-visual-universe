@@ -1,9 +1,26 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { ARCHITECTURE_MESSAGES, partialTreeMessage } from '../../architecture/messages.ts';
-import { ancestors, buildArchitecture, displayText } from '../../architecture/model.ts';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
+import type { DirectoryFailure, LoaderSnapshot } from '../../architecture/loader.ts';
+import {
+  ARCHITECTURE_MESSAGES,
+  describeDirectoryFailure,
+  describeRateLimitReset,
+  partialTreeMessage,
+} from '../../architecture/messages.ts';
+import { ancestors, displayText } from '../../architecture/model.ts';
+import type { TreeNode } from '../../architecture/store.ts';
 import type { Metric } from '../../architecture/treemap.ts';
+import { useDirectoryLoader } from '../../architecture/useDirectoryLoader.ts';
 import { useRepositoryTree } from '../../architecture/useRepositoryTree.ts';
-import { formatBytes, formatCount } from '../../dashboard/format.ts';
+import { boundedFigure, formatBytes, formatCount } from '../../dashboard/format.ts';
 import type { RepositoryTree } from '../../github/tree.ts';
 import type { RepositoryItem } from '../../github/repositories.ts';
 import { DirectoryTable } from './DirectoryTable.tsx';
@@ -54,26 +71,90 @@ export function ArchitectureView({ repo, accessToken, onUnauthorized, onBack }: 
       {state.phase === 'error' && (
         <div role="alert" className="notice notice-error">
           <p>{state.errorText}</p>
-          <button type="button" onClick={retry}>
+          <HandoffButton focusTarget={headingRef} onClick={retry}>
             Try again
-          </button>
+          </HandoffButton>
         </div>
       )}
 
-      {state.phase === 'ready' && <TreeExplorer repo={repo} tree={state.tree} />}
+      {state.phase === 'ready' && (
+        <TreeExplorer
+          repo={repo}
+          tree={state.tree}
+          accessToken={accessToken}
+          onUnauthorized={onUnauthorized}
+          onRetry={retry}
+          focusTarget={headingRef}
+        />
+      )}
     </section>
   );
 }
 
+/** Gives the explorer its loader, so the explorer itself only ever deals with a usable one. */
 function TreeExplorer({
   repo,
   tree,
+  accessToken,
+  onUnauthorized,
+  onRetry,
+  focusTarget,
 }: {
   readonly repo: RepositoryItem;
   readonly tree: RepositoryTree;
+  readonly accessToken: string;
+  readonly onUnauthorized: () => void;
+  readonly onRetry: () => void;
+  readonly focusTarget: RefObject<HTMLElement | null>;
 }) {
-  const model = useMemo(() => buildArchitecture(tree.entries), [tree.entries]);
+  const loader = useDirectoryLoader({
+    accessToken,
+    owner: repo.owner,
+    name: repo.name,
+    tree,
+    onUnauthorized,
+  });
+
+  if (!loader.usable) {
+    return (
+      <div role="alert" className="notice notice-error">
+        <p>{ARCHITECTURE_MESSAGES.unusableTree}</p>
+        <HandoffButton focusTarget={focusTarget} onClick={onRetry}>
+          Try again
+        </HandoffButton>
+      </div>
+    );
+  }
+  return (
+    <LoadedExplorer
+      repo={repo}
+      tree={tree}
+      snapshot={loader.snapshot}
+      loadDirectory={loader.loadDirectory}
+    />
+  );
+}
+
+function LoadedExplorer({
+  repo,
+  tree,
+  snapshot,
+  loadDirectory,
+}: {
+  readonly repo: RepositoryItem;
+  readonly tree: RepositoryTree;
+  readonly snapshot: LoaderSnapshot;
+  readonly loadDirectory: (directoryId: number) => Promise<unknown>;
+}) {
+  const model = snapshot.tree;
   const [focusId, setFocusId] = useState(0);
+  // Folder ids belong to one loader. A new loader (another token, tree or repository) starts at
+  // the root, never at an id that now means something else.
+  const [forLoader, setForLoader] = useState(() => loadDirectory);
+  if (forLoader !== loadDirectory) {
+    setForLoader(() => loadDirectory);
+    setFocusId(0);
+  }
   const [metric, setMetric] = useState<Metric>('bytes');
   const [showAll, setShowAll] = useState(false);
   const metricName = useId();
@@ -82,21 +163,52 @@ function TreeExplorer({
 
   const directory = model.nodes[focusId] ?? model.root;
   const crumbs = ancestors(model, directory.id);
-  const partial = partialTreeMessage({
-    truncated: tree.truncated,
-    skipped: tree.skipped,
-    inconsistent: model.inconsistent,
-  });
+  // Folders GitHub cut off, and folders that were never listed and cannot be (no usable SHA).
+  const { cutOffFolders, unloadableFolders } = useMemo(() => {
+    let cutOff = 0;
+    let unloadable = 0;
+    for (const node of model.nodes) {
+      if (node.kind !== 'directory') continue;
+      if (node.truncated) cutOff += 1;
+      if (node.status === 'unloaded' && !node.loadable) unloadable += 1;
+    }
+    return { cutOffFolders: cutOff, unloadableFolders: unloadable };
+  }, [model.nodes]);
+  const partial = model.totals.exact
+    ? null
+    : partialTreeMessage({
+        // Only a repository GitHub could not list in one piece is read folder by folder.
+        truncated: tree.mode === 'lazy',
+        skipped: model.skipped,
+        inconsistent: model.inconsistent,
+        // Not yet loaded but loadable: the ones opening a folder can still bring in.
+        unloadedDirectories: model.totals.unloadedDirectories - unloadableFolders,
+        unloadableDirectories: unloadableFolders,
+        cutOffFolders,
+      });
   const exact = partial === null;
   const { totals } = model;
   const isEmpty = model.root.children.length === 0;
   const place = directory.path === '' ? repo.name : directory.path;
 
+  // Only a folder nobody has listed (or whose last request failed) is requested. The loader
+  // would refuse any other, but there is no reason to ask it.
+  // After a 401 the loader refuses every request, so nothing is offered that would only fail.
+  const sessionEnded = snapshot.unauthorized;
+  const load = (node: TreeNode) => {
+    if (sessionEnded) return;
+    if (node.status === 'unloaded' || node.status === 'failed') void loadDirectory(node.id);
+  };
+
   const open = (id: number) => {
     movedByUser.current = true;
     setFocusId(id);
     setShowAll(false);
+    const node = model.nodes[id];
+    if (node !== undefined) load(node);
   };
+  const listed = directory.status === 'shallow' || directory.status === 'complete';
+  const failure = snapshot.failures.get(directory.id);
 
   // The folder button that was clicked is replaced by the new folder's rows, so move focus to the
   // heading of the new listing instead of letting it fall back to the page.
@@ -107,15 +219,25 @@ function TreeExplorer({
     }
   }, [focusId]);
 
+  // Every count is a lower bound until the whole tree is listed (`totals.exact`). The total size
+  // also stays one while a file has no reported size (`totals.bytesExact`).
   const stats: { label: string; value: string }[] = [
-    { label: 'Files', value: formatCount(totals.files) },
-    { label: 'Folders', value: formatCount(totals.directories) },
-    { label: 'Total size', value: formatBytes(totals.bytes) },
-    { label: 'Deepest level', value: formatCount(totals.maxDepth) },
+    { label: 'Files', value: boundedFigure(totals.files, formatCount, totals.exact) },
+    { label: 'Folders', value: boundedFigure(totals.directories, formatCount, totals.exact) },
+    { label: 'Total size', value: boundedFigure(totals.bytes, formatBytes, totals.bytesExact) },
+    { label: 'Deepest level', value: boundedFigure(totals.maxDepth, formatCount, totals.exact) },
   ];
-  if (totals.symlinks > 0) stats.push({ label: 'Symlinks', value: formatCount(totals.symlinks) });
+  if (totals.symlinks > 0) {
+    stats.push({
+      label: 'Symlinks',
+      value: boundedFigure(totals.symlinks, formatCount, totals.exact),
+    });
+  }
   if (totals.submodules > 0) {
-    stats.push({ label: 'Submodules', value: formatCount(totals.submodules) });
+    stats.push({
+      label: 'Submodules',
+      value: boundedFigure(totals.submodules, formatCount, totals.exact),
+    });
   }
 
   return (
@@ -129,6 +251,18 @@ function TreeExplorer({
       {partial !== null && (
         <p role="status" className="notice notice-warning">
           {partial}
+        </p>
+      )}
+
+      {snapshot.blockedUntil !== null && (
+        <p role="status" className="notice notice-warning">
+          {describeRateLimitReset(snapshot.blockedUntil)}
+        </p>
+      )}
+
+      {snapshot.unauthorized && (
+        <p role="alert" className="notice notice-error">
+          {ARCHITECTURE_MESSAGES.unauthorized}
         </p>
       )}
 
@@ -215,24 +349,127 @@ function TreeExplorer({
               </ol>
             </nav>
 
-            <Treemap directory={directory} metric={metric} onOpen={open} />
+            {listed && <Treemap directory={directory} metric={metric} onOpen={open} />}
 
             <h3 ref={contentsRef} tabIndex={-1} className="contents-heading">
               Contents of {place}
             </h3>
-            <DirectoryTable
-              directory={directory}
-              showAll={showAll}
-              onShowAll={() => {
-                setShowAll(true);
-              }}
-              onOpen={open}
-            />
+            {directory.truncated && (
+              <p className="note">
+                GitHub cut off this folder&apos;s listing because it is too large, so some of its
+                entries are missing. They cannot be loaded, and asking again will not bring them
+                back.
+              </p>
+            )}
+            {listed ? (
+              <DirectoryTable
+                directory={directory}
+                showAll={showAll}
+                onShowAll={() => {
+                  setShowAll(true);
+                }}
+                onOpen={open}
+              />
+            ) : (
+              <FolderState
+                directory={directory}
+                failure={failure}
+                canLoad={!sessionEnded}
+                focusTarget={contentsRef}
+                onLoad={() => {
+                  load(directory);
+                }}
+              />
+            )}
           </section>
 
           <ExtensionChart extensions={model.extensions} totalFiles={totals.files} />
         </>
       )}
     </>
+  );
+}
+
+/** What stands in for the table of a folder whose contents have not arrived. */
+function FolderState({
+  directory,
+  failure,
+  canLoad,
+  focusTarget,
+  onLoad,
+}: {
+  readonly directory: TreeNode;
+  readonly failure: DirectoryFailure | undefined;
+  /** `false` once the session has ended: loading and retrying are no longer offered. */
+  readonly canLoad: boolean;
+  /** Where focus goes when the button that was used is replaced by the loading state. */
+  readonly focusTarget: RefObject<HTMLElement | null>;
+  readonly onLoad: () => void;
+}) {
+  if (directory.status === 'loading') {
+    return (
+      <p role="status" className="loading">
+        {ARCHITECTURE_MESSAGES.folderLoading}
+      </p>
+    );
+  }
+  if (directory.status === 'failed') {
+    return (
+      <div role="alert" className="notice notice-error">
+        <p>
+          {failure === undefined
+            ? ARCHITECTURE_MESSAGES.folderUnusable
+            : describeDirectoryFailure(failure)}
+        </p>
+        {canLoad && (failure?.retryable ?? false) && (
+          <HandoffButton focusTarget={focusTarget} onClick={onLoad}>
+            Try again
+          </HandoffButton>
+        )}
+      </div>
+    );
+  }
+  if (!directory.loadable) return <p className="note">{ARCHITECTURE_MESSAGES.folderNoSha}</p>;
+  return (
+    <p className="note">
+      {ARCHITECTURE_MESSAGES.folderNotLoaded}{' '}
+      {canLoad && (
+        <HandoffButton focusTarget={focusTarget} onClick={onLoad}>
+          Load this folder
+        </HandoffButton>
+      )}
+    </p>
+  );
+}
+
+/**
+ * A button that is replaced once it has been used (by a loading state, say). If it still has
+ * focus at the moment it is removed, focus goes to `focusTarget` instead of falling back to the
+ * page. A button that stays (a request that was refused, for instance) keeps focus, and a button
+ * removed while something else has focus changes nothing.
+ */
+function HandoffButton({
+  focusTarget,
+  onClick,
+  children,
+}: {
+  readonly focusTarget: RefObject<HTMLElement | null>;
+  readonly onClick: () => void;
+  readonly children: ReactNode;
+}) {
+  // The callback ref's cleanup runs as the button is detached, while it is still in the page, so
+  // `document.activeElement` still says whether it had focus. It must keep its identity (it only
+  // changes with `focusTarget`, which is a ref object): a new one would detach and re-attach the
+  // button on every render, and the cleanup would then move focus for no reason.
+  const watchFocus = useCallback(
+    (button: HTMLButtonElement) => () => {
+      if (document.activeElement === button) focusTarget.current?.focus();
+    },
+    [focusTarget],
+  );
+  return (
+    <button ref={watchFocus} type="button" onClick={onClick}>
+      {children}
+    </button>
   );
 }

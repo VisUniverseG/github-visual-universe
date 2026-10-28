@@ -131,12 +131,18 @@ export type GitHubBranch = z.infer<typeof githubBranchSchema>;
 /**
  * One entry of a Git tree. `blob` is a file (or a symlink, mode `120000`), `tree` a directory and
  * `commit` a submodule. Only blobs carry a `size`.
+ *
+ * `sha` is the object id. For a `tree` entry it is what a later request uses to list that folder,
+ * so it is only kept when it is a well-formed Git SHA: anything else is absent (`undefined`, or
+ * `null` if GitHub sent `null`: callers must treat both as "no SHA"), and a folder without a usable
+ * `sha` can never be loaded. (For a `commit` entry it names a commit in
+ * another repository and must never be requested.)
  */
 export const githubTreeEntrySchema = z.object({
   path: z.string().min(1).max(4096),
   mode: lenient(z.string()),
   type: z.enum(['blob', 'tree', 'commit']),
-  sha: lenient(z.string()),
+  sha: lenient(gitShaSchema),
   size: lenient(z.number().int().nonnegative()),
 });
 export type GitHubTreeEntry = z.infer<typeof githubTreeEntrySchema>;
