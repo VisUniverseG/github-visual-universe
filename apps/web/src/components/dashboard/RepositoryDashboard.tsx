@@ -10,6 +10,7 @@ import {
 import { REPOSITORY_MESSAGES } from '../../dashboard/messages.ts';
 import { computeStats, languageDistribution } from '../../dashboard/stats.ts';
 import { useRepositoryDataset } from '../../dashboard/useRepositoryDataset.ts';
+import { ArchitectureView } from '../architecture/ArchitectureView.tsx';
 import { DataStatus } from './DataStatus.tsx';
 import { FilterBar, type LanguageOption } from './FilterBar.tsx';
 import { LanguageChart } from './LanguageChart.tsx';
@@ -36,6 +37,10 @@ export function RepositoryDashboard({ accessToken, onUnauthorized }: Props) {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const returnFocusId = useRef<number | null>(null);
+  // The repository whose architecture is open. The dashboard stays mounted (just hidden) so its
+  // loaded data, filters and selection survive going there and back.
+  const [architectureId, setArchitectureId] = useState<number | null>(null);
+  const returnToArchitectureButton = useRef(false);
 
   // Statistics and the chart always describe the whole loaded dataset, never the filtered view
   // and never just the latest page.
@@ -70,6 +75,24 @@ export function RepositoryDashboard({ accessToken, onUnauthorized }: Props) {
     }
   }, [selectedId]);
 
+  const architectureRepo =
+    architectureId === null
+      ? null
+      : (data.items.find((item) => item.id === architectureId) ?? null);
+
+  // Back from the architecture view: focus the button that opened it.
+  useEffect(() => {
+    if (architectureId === null && returnToArchitectureButton.current) {
+      returnToArchitectureButton.current = false;
+      document.querySelector<HTMLElement>('[data-architecture-button]')?.focus();
+    }
+  }, [architectureId]);
+
+  const closeArchitecture = () => {
+    returnToArchitectureButton.current = true;
+    setArchitectureId(null);
+  };
+
   const closeDetail = () => {
     returnFocusId.current = selectedId;
     setSelectedId(null);
@@ -83,68 +106,88 @@ export function RepositoryDashboard({ accessToken, onUnauthorized }: Props) {
   };
 
   return (
-    <div className="dashboard">
-      <DataStatus
-        data={data}
-        viewer={viewer}
-        onRetry={retry}
-        onLoadMore={loadMore}
-        onRetryViewer={retryViewer}
-      />
+    <>
+      <div className="dashboard" hidden={architectureRepo !== null}>
+        <DataStatus
+          data={data}
+          viewer={viewer}
+          onRetry={retry}
+          onLoadMore={loadMore}
+          onRetryViewer={retryViewer}
+        />
 
-      {showEmpty && <p className="note empty">{REPOSITORY_MESSAGES.empty}</p>}
+        {showEmpty && <p className="note empty">{REPOSITORY_MESSAGES.empty}</p>}
 
-      {hasItems && (
-        <>
-          <div className="insights">
-            <StatsGrid stats={stats} viewer={viewer} complete={exact} />
-            <LanguageChart distribution={distribution} complete={exact} />
-          </div>
-
-          <section aria-labelledby="repos-heading" className="panel">
-            <div className="panel-head">
-              <h2 id="repos-heading">Repositories</h2>
-              <span className="note" aria-live="polite">
-                Showing {formatCount(visible.length)} of {formatCount(data.items.length)}
-                {exact ? '' : ' (partial)'}
-              </span>
+        {hasItems && (
+          <>
+            <div className="insights">
+              <StatsGrid stats={stats} viewer={viewer} complete={exact} />
+              <LanguageChart distribution={distribution} complete={exact} />
             </div>
 
-            <FilterBar
-              filters={filters}
-              onChange={setFilters}
-              onReset={reset}
-              canReset={filtersActive}
-              languageOptions={languageOptions}
-              ownershipAvailable={viewerLogin !== null}
-              showOther={stats.other !== null && stats.other > 0}
-            />
+            <section aria-labelledby="repos-heading" className="panel">
+              <div className="panel-head">
+                <h2 id="repos-heading">Repositories</h2>
+                <span className="note" aria-live="polite">
+                  Showing {formatCount(visible.length)} of {formatCount(data.items.length)}
+                  {exact ? '' : ' (partial)'}
+                </span>
+              </div>
 
-            <div className={selected ? 'repo-layout repo-layout-split' : 'repo-layout'}>
-              {visible.length === 0 ? (
-                <div className="empty">
-                  <p>{REPOSITORY_MESSAGES.noResults}</p>
-                  <button type="button" onClick={reset}>
-                    Reset filters
-                  </button>
-                </div>
-              ) : (
-                <div className="repo-grid">
-                  {visible.map((repo) => (
-                    <RepositoryCard
-                      key={repo.id}
-                      repo={repo}
-                      selected={repo.id === selectedId}
-                      onSelect={setSelectedId}
-                    />
-                  ))}
-                </div>
-              )}
-              {selected && <RepositoryDetail repo={selected} onClose={closeDetail} />}
-            </div>
-          </section>
-        </>
+              <FilterBar
+                filters={filters}
+                onChange={setFilters}
+                onReset={reset}
+                canReset={filtersActive}
+                languageOptions={languageOptions}
+                ownershipAvailable={viewerLogin !== null}
+                showOther={stats.other !== null && stats.other > 0}
+              />
+
+              <div className={selected ? 'repo-layout repo-layout-split' : 'repo-layout'}>
+                {visible.length === 0 ? (
+                  <div className="empty">
+                    <p>{REPOSITORY_MESSAGES.noResults}</p>
+                    <button type="button" onClick={reset}>
+                      Reset filters
+                    </button>
+                  </div>
+                ) : (
+                  <div className="repo-grid">
+                    {visible.map((repo) => (
+                      <RepositoryCard
+                        key={repo.id}
+                        repo={repo}
+                        selected={repo.id === selectedId}
+                        onSelect={setSelectedId}
+                      />
+                    ))}
+                  </div>
+                )}
+                {selected && (
+                  <RepositoryDetail
+                    repo={selected}
+                    onClose={closeDetail}
+                    onOpenArchitecture={() => {
+                      setArchitectureId(selected.id);
+                    }}
+                  />
+                )}
+              </div>
+            </section>
+          </>
+        )}
+      </div>
+
+      {architectureRepo && (
+        <ArchitectureView
+          key={architectureRepo.id}
+          repo={architectureRepo}
+          accessToken={accessToken}
+          onUnauthorized={onUnauthorized}
+          onBack={closeArchitecture}
+        />
       )}
-    </div>
+    </>
   );
 }

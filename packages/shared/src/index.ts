@@ -20,18 +20,27 @@ export type {
 } from './auth.js';
 
 export {
+  githubBranchSchema,
+  githubDefaultBranchSchema,
   githubInstallationRepositoriesResponseSchema,
   githubInstallationSchema,
   githubInstallationsResponseSchema,
   githubOwnerSchema,
   githubRepositorySchema,
+  githubTreeEntrySchema,
   githubUserSchema,
+  gitShaSchema,
+  parseGitTree,
   parseInstallationRepositories,
 } from './github.js';
 export type {
+  GitHubBranch,
+  GitHubDefaultBranch,
   GitHubInstallation,
   GitHubInstallationRepositoriesResponse,
   GitHubInstallationsResponse,
   GitHubRepository,
+  GitHubTreeEntry,
   GitHubUser,
+  ParsedGitTree,
 } from './github.js';

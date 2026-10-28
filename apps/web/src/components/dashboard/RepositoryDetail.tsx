@@ -6,6 +6,7 @@ import { VISIBILITY_LABELS } from './RepositoryCard.tsx';
 interface Props {
   readonly repo: RepositoryItem;
   readonly onClose: () => void;
+  readonly onOpenArchitecture: () => void;
 }
 
 interface Row {
@@ -17,7 +18,7 @@ interface Row {
  * Details for one repository, limited to what the repository list already returned. Rows for
  * missing values are omitted rather than shown as zero or "unknown".
  */
-export function RepositoryDetail({ repo, onClose }: Props) {
+export function RepositoryDetail({ repo, onClose, onOpenArchitecture }: Props) {
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   // Move focus to the panel when a repository is selected, so keyboard and screen-reader users
@@ -62,6 +63,15 @@ export function RepositoryDetail({ repo, onClose }: Props) {
 
       {repo.description && <p>{repo.description}</p>}
 
+      <button
+        type="button"
+        className="primary"
+        data-architecture-button
+        onClick={onOpenArchitecture}
+      >
+        View architecture
+      </button>
+
       <dl className="detail-list">
         {rows.map((row) => (
           <div key={row.label} className="detail-row">
@@ -88,8 +98,7 @@ export function RepositoryDetail({ repo, onClose }: Props) {
       )}
 
       <p className="note">
-        Architecture, branches, commits, pull requests and more will have their own views in later
-        phases.
+        Branches, commits, pull requests and more will have their own views in later phases.
       </p>
     </aside>
   );
