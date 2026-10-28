@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { DEFAULT_API_BASE_URL, fetchApiHealth } from './api.ts';
 import { readAuthSettings } from './auth/config.ts';
 import { useGitHubSession, type SessionDeps } from './auth/useGitHubSession.ts';
-import { RepositoryBrowser } from './components/RepositoryBrowser.tsx';
+import { RepositoryDashboard } from './components/dashboard/RepositoryDashboard.tsx';
 
 type ApiStatus =
   | { readonly kind: 'checking' }
@@ -46,52 +46,77 @@ export function App({ auth }: AppProps = {}) {
     return () => controller.abort();
   }, [apiBaseUrl]);
 
+  const signedIn = state.kind === 'signed_in';
+
   return (
-    <main className="app">
-      <h1>GitHub Visual Universe</h1>
-      <p>A read-only, open-source visual explorer for your GitHub account.</p>
-      <p className="status" role="status">
-        {status.kind === 'checking' && 'Checking API…'}
-        {status.kind === 'ok' && `API online (v${status.version})`}
-        {status.kind === 'unreachable' &&
-          'API unreachable. It may be waking up; try again shortly.'}
-      </p>
-
-      {notice && (
-        <div
-          role={notice.tone === 'error' ? 'alert' : 'status'}
-          className={`notice notice-${notice.tone}`}
-        >
-          {notice.text}
-        </div>
-      )}
-
-      {!settings.ok && <p className="note">Sign-in is not configured for this deployment.</p>}
-
-      {settings.ok && state.kind === 'signed_out' && (
-        <button type="button" onClick={() => void connect()}>
-          Connect GitHub
-        </button>
-      )}
-      {state.kind === 'connecting' && <p role="status">Preparing sign-in…</p>}
-      {state.kind === 'completing' && <p role="status">Completing sign-in…</p>}
-
-      {state.kind === 'signed_in' && (
-        <>
-          <p>
-            Connected to GitHub with read-only access.{' '}
-            <button type="button" onClick={() => void disconnect()}>
-              Disconnect
-            </button>
+    <div className="shell">
+      <header className="topbar">
+        <div className="brand">
+          <h1>GitHub Visual Universe</h1>
+          <p className="tagline">
+            A read-only, open-source visual explorer for your GitHub account.
           </p>
-          <RepositoryBrowser accessToken={state.token.accessToken} onUnauthorized={expireSession} />
-        </>
-      )}
+        </div>
+        <div className="topbar-actions">
+          <p className={`status status-${status.kind}`} role="status">
+            {status.kind === 'checking' && 'Checking API…'}
+            {status.kind === 'ok' && `API online (v${status.version})`}
+            {status.kind === 'unreachable' &&
+              'API unreachable. It may be waking up; try again shortly.'}
+          </p>
+          {signedIn && (
+            <>
+              <span className="chip chip-ok">Connected · read-only</span>
+              <button type="button" onClick={() => void disconnect()}>
+                Disconnect
+              </button>
+            </>
+          )}
+        </div>
+      </header>
 
-      <p className="note">
-        This app only reads from GitHub and never changes anything. Visualizations are not
-        implemented yet.
-      </p>
-    </main>
+      <main className="content">
+        {notice && (
+          <div
+            role={notice.tone === 'error' ? 'alert' : 'status'}
+            className={`notice notice-${notice.tone}`}
+          >
+            {notice.text}
+          </div>
+        )}
+
+        {!signedIn && (
+          <section className="hero">
+            <h2>Explore your GitHub universe</h2>
+            <p>
+              Connect your GitHub account to see an overview of every repository you can access,
+              including private and organization repositories where the GitHub App is installed.
+              This app only reads from GitHub and never changes anything.
+            </p>
+
+            {!settings.ok && <p className="note">Sign-in is not configured for this deployment.</p>}
+            {settings.ok && state.kind === 'signed_out' && (
+              <button type="button" className="primary" onClick={() => void connect()}>
+                Connect GitHub
+              </button>
+            )}
+            {state.kind === 'connecting' && <p role="status">Preparing sign-in…</p>}
+            {state.kind === 'completing' && <p role="status">Completing sign-in…</p>}
+          </section>
+        )}
+
+        {state.kind === 'signed_in' && (
+          <RepositoryDashboard
+            accessToken={state.token.accessToken}
+            onUnauthorized={expireSession}
+          />
+        )}
+      </main>
+
+      <footer className="footer note">
+        Read-only: nothing here creates, changes or deletes anything on GitHub. More visualizations
+        are planned.
+      </footer>
+    </div>
   );
 }

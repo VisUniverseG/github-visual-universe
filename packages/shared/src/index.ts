@@ -25,10 +25,13 @@ export {
   githubInstallationsResponseSchema,
   githubOwnerSchema,
   githubRepositorySchema,
+  githubUserSchema,
+  parseInstallationRepositories,
 } from './github.js';
 export type {
   GitHubInstallation,
   GitHubInstallationRepositoriesResponse,
   GitHubInstallationsResponse,
   GitHubRepository,
+  GitHubUser,
 } from './github.js';

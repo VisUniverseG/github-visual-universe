@@ -3,9 +3,9 @@
 GitHub Visual Universe is designed to be **read-only** and to keep your repository data between your
 browser and GitHub. This document describes the security model and how to report problems.
 
-> **Current status:** local development. **Sign-in and repository discovery are implemented and
-> tested against mocked GitHub responses, but have not yet been run against real GitHub, and nothing
-> is deployed.** Rate limiting on the broker is **not implemented and is required before any public
+> **Current status:** local development. **Sign-in and repository listing are implemented and have
+> been manually verified against real GitHub by the maintainer. Automated tests use mocked GitHub
+> responses only, and nothing is deployed.** Rate limiting on the broker is **not implemented and is required before any public
 > deployment.** The model below is the agreed **design** (see [ADR 0001](./docs/adr/0001-auth-broker-and-direct-github-access.md)).
 > Sections marked _(planned)_ are not yet in code. Where this document and the ADR differ, the ADR
 > takes precedence.
