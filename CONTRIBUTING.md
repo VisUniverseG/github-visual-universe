@@ -40,7 +40,8 @@ npm ci           # installs all workspaces from the lockfile
 | `npm run format`         | Format with Prettier                                                        |
 | `npm run lint`           | ESLint (type-aware)                                                         |
 | `npm run typecheck`      | `tsc` in every workspace                                                    |
-| `npm test`               | Vitest in every workspace                                                   |
+| `npm test`               | Vitest in every workspace, then the offline spike-harness tests             |
+| `npm run test:spikes`    | Only the offline spike-harness tests (no credentials, no internet)          |
 | `npm run build`          | Build shared, API and web                                                   |
 | `npm run licenses:check` | Fail on unreviewed dependency licenses                                      |
 | `npm run audit:deps`     | `npm audit` at high severity                                                |

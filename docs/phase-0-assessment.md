@@ -1,7 +1,9 @@
 # Phase 0 Assessment
 
 - **Date:** 2026-10-27
-- **Status:** Approved. Phase 1, Step 1 (foundation) implemented on branch `chore/foundation`.
+- **Status:** Approved at the time of Phase 0. This is a **historical record**. The repository has
+  moved on; see the [status review of 2026-10-28](#status-review-2026-10-28) before relying on
+  anything below as current.
 - **Scope:** Planning and repository inspection only. Nothing in this document is implemented
   unless stated in [ARCHITECTURE.md](./ARCHITECTURE.md).
 - **Amended 2026-10-27 (after the Phase 2 spike):** this document is kept as a historical record
@@ -9,7 +11,9 @@
   passages are marked _(amended)_. **Where this document differs from
   [ARCHITECTURE.md](./ARCHITECTURE.md) or
   [ADR 0001](./adr/0001-auth-broker-and-direct-github-access.md), those two take precedence.**
-  Nothing described here as sign-in, token handling or the broker exists in code yet.
+  _(Status 2026-10-28: the original sentence "Nothing described here as sign-in, token handling or
+  the broker exists in code yet" is no longer true. Sign-in, token handling and the broker are now
+  implemented and mock-tested; see S2 below.)_
 
 Legend: ✅ verified from official documentation or the npm registry · ⚠️ assumption or needs a
 spike · 📌 recommendation.
@@ -20,10 +24,58 @@ spike · 📌 recommendation.
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | Package manager   | npm workspaces                                                                                                                                  |
 | TypeScript        | **6.0.3** (stable). TypeScript 7 deferred; see [spike](./spikes/typescript-7-compatibility.md) and [ADR 0002](./adr/0002-typescript-version.md) |
-| Foundation commit | Left uncommitted on `chore/foundation` for review                                                                                               |
+| Foundation commit | Left uncommitted on `chore/foundation` for review _(status 2026-10-28: since merged; see S1)_                                                   |
 | D1 (Phase 2)      | Short-lived access token in `sessionStorage` only; refresh token never stored in the browser or returned to the frontend                        |
 | D2 (Phase 2)      | GitHub App permissions: Metadata, Contents, Pull requests, Issues, Actions, all read-only; nothing else                                         |
 | D3 (Phase 2)      | The GitHub App is owned by the `VisUniverseG` organization                                                                                      |
+
+---
+
+## Status review (2026-10-28)
+
+This review was added on 2026-10-28 and **does not change the original assessment**. Sections 1 to
+15 below still describe Phase 0 as written (with the earlier _(amended)_ corrections). Where a
+passage is now outdated, the table below says so, and a few passages carry an inline
+_(status 2026-10-28)_ marker. Current facts are in [ARCHITECTURE.md](./ARCHITECTURE.md),
+[ADR 0001](./adr/0001-auth-broker-and-direct-github-access.md#implementation-status-2026-10-28),
+[SECURITY.md](../SECURITY.md) and [PRIVACY.md](../PRIVACY.md).
+
+The ✅ in this document means "stated in official documentation or the npm registry". It does
+**not** mean that the behaviour was observed against GitHub by this project.
+
+Terms used in the table:
+
+- **Implemented:** present in the code, checked against the source.
+- **Mock or local tests:** covered by automated tests that use fake GitHub responses. This shows the
+  code behaves as designed, not how real GitHub behaves.
+- **Verified live:** observed against real GitHub and recorded in this repository.
+- **Assumption:** depends on GitHub behaviour or settings that the repository cannot show.
+
+| ID  | Phase 0 statement (section)                                                                                                  | Status on 2026-10-28                                                                                                                                                                                                                                                                                                                                     |
+| --- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S1  | Foundation implemented on `chore/foundation` and "left uncommitted" (header, decisions table, §15)                           | **Outdated.** The repository history contains merge commits for pull requests #1 to #4: the foundation, the repository overview, the architecture view and large-repository loading.                                                                                                                                                                     |
+| S2  | "Nothing … as sign-in, token handling or the broker exists in code yet"; "No authentication code exists today" (header, §15) | **Outdated.** Implemented: the broker (`POST /auth/token`, `POST /auth/revoke`, `GET /health`), PKCE sign-in, `sessionStorage` token, disconnect with revocation. _Mock or local tests:_ yes. _Verified live:_ not as recorded evidence (see S3).                                                                                                        |
+| S3  | The spike harness "has not been run against a real GitHub App" (§6 item 2, §14, §15)                                         | **Partly outdated.** Only the anonymous checks `ANON-01` to `ANON-03` have been run live, per [ADR 0001](./adr/0001-auth-broker-and-direct-github-access.md#implementation-status-2026-10-28). No account-dependent check has been run, and the status of U1 to U11 is unchanged. The offline harness tests now also run in `npm test`.                  |
+| S4  | Diagram (§3): IndexedDB cache, "REST + GraphQL", Render and Pages as the hosts                                               | **Not implemented.** There is no IndexedDB or any cache, and no GraphQL; the app uses REST `GET` only. Nothing is deployed, and the repository has no Pages deploy workflow or `render.yaml`.                                                                                                                                                            |
+| S5  | One wrapper that allows only `GET` and GraphQL `query`, enforced by "a unit test and lint rule" (§6 item 3, §12, §13)        | **Partly implemented.** `githubGet` is the only code that calls `api.github.com`, and it sends only `GET`. Mock tests at each call site assert `GET` requests to `api.github.com`. There is **no lint rule**, **no global test** that fails on any other method, and no GraphQL.                                                                         |
+| S6  | Per-user IndexedDB cache keys, cleared on logout (§6 item 4, §13)                                                            | **Not implemented.** Repository data lives in React state in memory only.                                                                                                                                                                                                                                                                                |
+| S7  | "Strict CSP, no third-party scripts" (§6 item 5)                                                                             | **Implemented as a build-time `<meta>` CSP** (`connect-src` limited to the API origin and `api.github.com`). `npm run dev` has none. Unit tests cover the policy builder. Enforcement in real browsers is **not verified**.                                                                                                                              |
+| S8  | Token hygiene and revocation through the broker (§6 item 6)                                                                  | **Implemented and mock-tested.** The browser clears its session first, then asks the broker to revoke, and reports revocation only if GitHub confirmed it. Real revocation is **not verified live**; if it fails, the token stays valid until it expires. The 8-hour lifetime is GitHub's documented figure, not measured by us.                         |
+| S9  | The GitHub App, its permissions (D2), and "register two apps" (§5)                                                           | **Not verifiable from the repository.** [ARCHITECTURE.md](./ARCHITECTURE.md) reports an app was created and installed with credentials kept locally. Its permissions and settings are an **assumption**. The code uses only Metadata and Contents; Pull requests, Issues and Actions are unused today.                                                   |
+| S10 | Feature-to-API mapping (§7)                                                                                                  | **Plan, mostly not implemented.** The only endpoints called are `GET /user`, `/user/installations`, `/user/installations/{id}/repositories`, `/repos/{owner}/{repo}`, `.../branches/{branch}` and `.../git/trees/{sha}`. No GraphQL, ETag or 304 caching, statistics or events. The truncated-tree fallback exists (mock-tested, **not verified live**). |
+| S11 | Visualization libraries (§8)                                                                                                 | **Not adopted so far.** None of the listed libraries is a dependency. The treemap in the architecture view is in-house code. The `elkjs` licence warning remains valid.                                                                                                                                                                                  |
+| S12 | MVP v0.1 scope (§10) and roadmap phases (§11)                                                                                | **Partly done, and the numbering diverged.** Sign-in/out and a repository list and detail exist. The account universe graph, a rate-limit meter and a cache do not. [ARCHITECTURE.md](./ARCHITECTURE.md) numbers the work differently (Phase 3 auth, Phase 4 overview, Phases 5 and 6 architecture view); read §11 as the original plan only.            |
+| S13 | Testing strategy (§12): MSW, Playwright E2E, secret scanning, performance fixtures                                           | **Planned, not present.** Tests use Vitest, Testing Library and jsdom with an injected fake `fetch`. There is no MSW, Playwright, secret scanning or performance fixture. The CSP, licence and `npm audit` checks do exist (`npm test`, CI).                                                                                                             |
+| S14 | Risk mitigations (§13)                                                                                                       | **Mixed.** Implemented and mock-tested: exact origin and `redirect_uri` allow-lists, request validation, `state` plus PKCE `S256`, no logging of request contents. **Not implemented:** broker rate limiting (required before any public deployment), secret scanning in CI, a PR template, a cache to wipe.                                             |
+| S15 | Gap analysis and deployment (§2, §9)                                                                                         | **Still open in the repository:** Pages and Render deployment, Dependabot, issue and PR templates, a code of conduct, and a `404.html` or router fallback. Settings outside the repository (Pages, Render, branch protection) cannot be verified from it.                                                                                                |
+| S16 | §14 "Verified" list and the spike table                                                                                      | **Still accurate as a record of documentation-based facts.** The spike-table statuses are unchanged: nothing there has been resolved since Phase 2. No router exists; the `/auth/callback` path is matched by comparing the page address, which does not settle spike item 10 for production.                                                            |
+
+**Still valid and not contradicted by the repository:** the Phase 0 findings on the empty starting
+state (§1), the choice of a GitHub App with a thin broker and direct browser access (§3, §5), the
+technology versions in §4 (they match `package-lock.json`), the GitHub documentation facts and
+limits in §5, §7 and §9, the `elkjs` licence flag (§8), and the security risk list in §13 as a list
+of risks. Nothing in the repository contradicts them. They have not been re-checked against
+GitHub's live documentation.
 
 ---
 
@@ -67,6 +119,9 @@ remains open.
 │                        │──────────────────────────────▶ api.github.com
 └────────────────────────┘     Bearer user token         (REST + GraphQL)
 ```
+
+_(Status 2026-10-28: this is the Phase 0 target. Today there is no IndexedDB cache and no GraphQL,
+and nothing is deployed; see S4 and S6.)_
 
 📌 **Core decision: a thin auth broker plus direct-to-GitHub data fetching** (see
 [ADR 0001](./adr/0001-auth-broker-and-direct-github-access.md)).
@@ -186,12 +241,16 @@ guarantee; see [ADR 0001](./adr/0001-auth-broker-and-direct-github-access.md).
    expected to limit that token to the intersection of what the user and the app can access, and our
    code adds no cross-user path. _(amended: this is a design intent that relies on GitHub
    enforcement and on controls still to be built, not a structural guarantee. The authorization
-   spike harness exists to check it with real accounts and has not yet been run.)_
+   spike harness exists to check it with real accounts and has not yet been run.)_ _(Status
+   2026-10-28: still true for account checks; only the anonymous `ANON-01` to `ANON-03` have been
+   run live. See S3.)_
    Private repository access additionally requires the app to be **installed on the owning account
    with that repository granted**; authorizing alone is not enough.
 3. Read-only at three layers: read-only GitHub App permissions; one API wrapper that allows only
-   `GET` and GraphQL `query`; a unit test and lint rule enforcing that wrapper.
+   `GET` and GraphQL `query`; a unit test and lint rule enforcing that wrapper. _(Status
+   2026-10-28: partly implemented; there is no lint rule and no GraphQL. See S5.)_
 4. Per-user cache keys (`userId:host:path`) in IndexedDB, cleared on logout and user change.
+   _(Status 2026-10-28: not implemented; see S6.)_
 5. No telemetry or analytics with repository content. Strict CSP, no third-party scripts, reviewed
    lockfile. _(amended: a `<meta>` CSP is a **prerequisite** before any authentication code is
    implemented, not something added alongside it.)_
@@ -278,6 +337,9 @@ license gate fails on unexpected licenses.
 
 ## 11. Development roadmap
 
+_(Status 2026-10-28: this is the original Phase 0 plan. Phase numbers and scope in the repository's
+other documents differ; see S12.)_
+
 | Phase | Goal                                                              | Exit criteria                                                                                                                      |
 | ----- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | 0     | Assessment (this document)                                        | Approved ✅                                                                                                                        |
@@ -357,14 +419,19 @@ installation), U3 (token issued before installation), U4 (wildcard callback matc
 endpoint response format), U9 (token-minting limits), U10 (authorization code lifetime). The
 authorization spike harness (`scripts/spikes/github-auth`, plan in
 [`spikes/github-auth-harness.md`](./spikes/github-auth-harness.md)) is prepared and tested offline
-but has **not been run against a real GitHub App**.
+but has **not been run against a real GitHub App**. _(Status 2026-10-28: only the anonymous checks
+`ANON-01` to `ANON-03` have been run live; no account-dependent check has. See S3.)_
 
 ## 15. Recommended next step (as of Phase 0)
 
 Phase 1, Step 1: repository foundation (docs, tooling, scaffolds, CI checks) with no authentication
-and no feature code. **Done on `chore/foundation`, uncommitted.**
+and no feature code. **Done on `chore/foundation`, uncommitted.** _(Status 2026-10-28: outdated; see
+S1.)_
 
 _(amended)_ Phase 2 research is complete and its decisions are recorded in
 [ADR 0001](./adr/0001-auth-broker-and-direct-github-access.md). The next gates before any
 authentication code are: a `<meta>` Content Security Policy, the router decision, and running the
-spike harness against a development GitHub App. No authentication code exists today.
+spike harness against a development GitHub App. No authentication code exists today. _(Status
+2026-10-28: outdated. Authentication code now exists (S2), and a `<meta>` CSP is in place (S7). The
+router decision is still pending, and the account-dependent harness checks have still not been run
+(S3, S16).)_
