@@ -70,6 +70,15 @@ Terms used in the table:
 | S15 | Gap analysis and deployment (§2, §9)                                                                                         | **Still open in the repository:** Pages and Render deployment, Dependabot, issue and PR templates, a code of conduct, and a `404.html` or router fallback. Settings outside the repository (Pages, Render, branch protection) cannot be verified from it.                                                                                                |
 | S16 | §14 "Verified" list and the spike table                                                                                      | **Still accurate as a record of documentation-based facts.** The spike-table statuses are unchanged: nothing there has been resolved since Phase 2. No router exists; the `/auth/callback` path is matched by comparing the page address, which does not settle spike item 10 for production.                                                            |
 
+**Update 2026-10-29 (to S9 above):** the S9 row is kept as written. Its last sentence, "The code
+uses only Metadata and Contents; Pull requests, Issues and Actions are unused today", dates from
+2026-10-28. Since then the Activity view reads the pull request list
+(`GET /repos/{owner}/{repo}/pulls`), which is expected to need Pull requests (read), so that
+permission is **no longer unused**; Issues and Actions still are. Whether GitHub requires exactly
+that permission has not been checked against a live token. The maintainer reports that the
+permission is enabled and that the list loaded in their own browser; the repository cannot show
+either. Current facts are in [ARCHITECTURE.md](./ARCHITECTURE.md).
+
 **Still valid and not contradicted by the repository:** the Phase 0 findings on the empty starting
 state (§1), the choice of a GitHub App with a thin broker and direct browser access (§3, §5), the
 technology versions in §4 (they match `package-lock.json`), the GitHub documentation facts and

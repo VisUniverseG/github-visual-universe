@@ -213,6 +213,14 @@ Terms:
   repository, so none of this is verifiable from the code. **Assumption.** The code calls only user,
   installation, repository-list, branch and git-tree endpoints, so it uses the Metadata and Contents
   permissions. Pull requests, Issues and Actions are requested by design but unused today.
+  _(Update 2026-10-29: the sentence above is kept as written; it dates from
+  2026-10-28. Since then the Activity view has added the commit-list and branch-list endpoints
+  (expected to need Contents, read) and the pull-request-list endpoint,
+  `GET /repos/{owner}/{repo}/pulls` (expected to need Pull requests, read). Pull requests is
+  therefore **no longer unused**; Issues and Actions still are. Which permission GitHub requires
+  for each endpoint has not been checked against a live token. The maintainer reports that Pull
+  requests (read-only) is enabled on the app and that the pull request list loaded in their own
+  browser; the repository can show neither. See [ARCHITECTURE.md](../ARCHITECTURE.md).)_
 - **Decision 4 (auth broker).** _Implemented:_ `apps/api` (Hono) exposes `POST /auth/token` and
   `POST /auth/revoke`, plus an unauthenticated `GET /health` that the pre-warm in Decision 10 uses.
   Token exchange returns only `{access_token, expires_in}`: the broker builds its response
