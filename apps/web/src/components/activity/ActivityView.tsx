@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { displayText } from '../../architecture/names.ts';
 import {
   ACTIVITY_MESSAGES,
@@ -7,24 +7,24 @@ import {
   describeCommitFailure,
   partialListMessage,
   undatedMessage,
-  type ActivityFailure,
 } from '../../activity/messages.ts';
 import { buildHistoryGraph } from '../../activity/historyGraph.ts';
+import { buildCommitIndex } from '../../activity/pullLinks.ts';
 import { buildTimeline } from '../../activity/timeline.ts';
+import { statusOf, usePagedList, type PagedList } from '../../activity/usePagedList.ts';
 import {
-  statusOf,
-  usePagedList,
-  type ListStatus,
-  type PagedListState,
-} from '../../activity/usePagedList.ts';
-import { formatCount } from '../../dashboard/format.ts';
-import { loadBranchPage, loadCommitPage, type PageCursor } from '../../github/activity.ts';
+  loadBranchPage,
+  loadCommitPage,
+  type CommitItem,
+  type PageCursor,
+} from '../../github/activity.ts';
 import type { RepositoryItem } from '../../github/repositories.ts';
-import { HandoffButton } from '../HandoffButton.tsx';
 import { BranchTable } from './BranchTable.tsx';
-import { CommitTable } from './CommitTable.tsx';
+import { CommitTable, commitRowId } from './CommitTable.tsx';
 import { CommitTimeline } from './CommitTimeline.tsx';
 import { HistoryGraph } from './HistoryGraph.tsx';
+import { FirstPageFailure, MoreControls, StatusChip, noun } from './ListParts.tsx';
+import { PullRequestsSection } from './PullRequestsSection.tsx';
 
 interface Props {
   readonly repo: RepositoryItem;
@@ -81,8 +81,7 @@ export function ActivityView({ repo, accessToken, onUnauthorized, onBack }: Prop
         </p>
       ) : (
         <>
-          <CommitsSection repo={repo} accessToken={accessToken} onUnauthorized={endSession} />
-          <BranchesSection repo={repo} accessToken={accessToken} onUnauthorized={endSession} />
+          <ActivityBody repo={repo} accessToken={accessToken} onUnauthorized={endSession} />
         </>
       )}
     </section>
@@ -95,115 +94,61 @@ interface SectionProps {
   readonly onUnauthorized: () => void;
 }
 
-function noun(count: number, one: string, many: string): string {
-  return `${formatCount(count)} ${count === 1 ? one : many}`;
-}
-
-/** The status of one list in a word, with what has been loaded. Failed lists have no count. */
-function StatusChip({
-  status,
-  loaded,
-  empty = false,
-}: {
-  readonly status: ListStatus;
-  /** What has been loaded so far, e.g. "120 commits". */
-  readonly loaded: string;
-  readonly empty?: boolean;
-}) {
-  if (status === 'loading') return null;
-  if (empty) return <span className="chip chip-warn">Empty</span>;
-  switch (status) {
-    case 'complete':
-      return <span className="chip chip-ok">{`Complete · ${loaded} loaded`}</span>;
-    case 'partial':
-      return <span className="chip chip-warn">{`Partial · ${loaded} loaded`}</span>;
-    case 'partial_error':
-      return <span className="chip chip-error">{`Partial, with an error · ${loaded} loaded`}</span>;
-    default:
-      return <span className="chip chip-error">Failed</span>;
-  }
-}
-
-/** A list whose first page did not arrive. */
-function FirstPageFailure({
-  error,
-  blocked,
-  focusTarget,
-  onRetry,
-}: {
-  readonly error: ActivityFailure;
-  readonly blocked: boolean;
-  readonly focusTarget: RefObject<HTMLElement | null>;
-  readonly onRetry: () => void;
-}) {
-  return (
-    <div role="alert" className="notice notice-error">
-      <p>{error.text}</p>
-      {error.retryable && !blocked && (
-        <HandoffButton focusTarget={focusTarget} onClick={onRetry}>
-          Try again
-        </HandoffButton>
-      )}
-    </div>
-  );
-}
-
-/** What follows a list that has loaded: a later page that failed, or the way to load more. */
-function MoreControls<T>({
-  state,
-  blocked,
-  label,
-  focusTarget,
-  onLoadMore,
-}: {
-  readonly state: PagedListState<T>;
-  readonly blocked: boolean;
-  /** "older commits" or "more branches". */
-  readonly label: string;
-  readonly focusTarget: RefObject<HTMLElement | null>;
-  readonly onLoadMore: () => void;
-}) {
-  const { error, next, loadingMore, blockedUntil } = state;
-  return (
-    <>
-      {blockedUntil !== null && (
-        <p role="status" className="notice notice-warning">
-          {describeBlockedUntil(blockedUntil)}
-        </p>
-      )}
-      {error !== null && (
-        <div role="alert" className="notice notice-error">
-          <p>{error.text} What was already loaded is still shown.</p>
-          {error.retryable && !blocked && (
-            <HandoffButton focusTarget={focusTarget} onClick={onLoadMore}>
-              Try again
-            </HandoffButton>
-          )}
-        </div>
-      )}
-      {error === null && next?.kind === 'more' && !blocked && (
-        <p>
-          <HandoffButton focusTarget={focusTarget} onClick={onLoadMore}>
-            {loadingMore ? `Loading ${label}…` : `Load ${label}`}
-          </HandoffButton>
-        </p>
-      )}
-    </>
-  );
-}
-
-function CommitsSection({ repo, accessToken, onUnauthorized }: SectionProps) {
+/**
+ * The panels of the view. The commits list is owned here, not by its panel, because two panels
+ * need it: the Commits panel shows it, and the Pull requests panel matches merged pull requests
+ * against exactly the commits that are loaded in it.
+ */
+function ActivityBody({ repo, accessToken, onUnauthorized }: SectionProps) {
   const { owner, name, defaultBranch } = repo;
   const loadPage = useCallback(
     (cursor: PageCursor | null, signal: AbortSignal) =>
       loadCommitPage(accessToken, { owner, name, branch: defaultBranch }, cursor, signal),
     [accessToken, owner, name, defaultBranch],
   );
-  const { state, loadMore, retry, blocked } = usePagedList({
+  const commitList = usePagedList({
     loadPage,
     describe: describeCommitFailure,
     onUnauthorized,
   });
+  const { phase, items, next } = commitList.state;
+  const commitIndex = useMemo(() => buildCommitIndex(items, phase, next), [items, phase, next]);
+  // The commit a pull request last took the reader to. Its row stays highlighted until another
+  // one is chosen: the browser's focus ring is not shown when script moves focus after a mouse
+  // click, and focus is lost as soon as the reader clicks elsewhere.
+  const [shownCommit, setShownCommit] = useState<string | null>(null);
+  // Focusing a table row also scrolls it into view. Only a SHA that is loaded is ever passed.
+  const showCommit = useCallback((sha: string) => {
+    setShownCommit(sha);
+    document.getElementById(commitRowId(sha))?.focus();
+  }, []);
+
+  return (
+    <>
+      <CommitsSection repo={repo} list={commitList} highlightSha={shownCommit} />
+      <PullRequestsSection
+        repo={repo}
+        accessToken={accessToken}
+        onUnauthorized={onUnauthorized}
+        commits={commitIndex}
+        onShowCommit={showCommit}
+      />
+      <BranchesSection repo={repo} accessToken={accessToken} onUnauthorized={onUnauthorized} />
+    </>
+  );
+}
+
+function CommitsSection({
+  repo,
+  list,
+  highlightSha,
+}: {
+  readonly repo: RepositoryItem;
+  readonly list: PagedList<CommitItem>;
+  readonly highlightSha: string | null;
+}) {
+  const { defaultBranch } = repo;
+  const { state, loadMore, retry, blocked } = list;
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   const { items, loadedAt } = state;
@@ -294,7 +239,12 @@ function CommitsSection({ repo, accessToken, onUnauthorized }: SectionProps) {
                 merge has two. The Parents column of the table lists the same links as text.
               </p>
               <HistoryGraph graph={graph} commits={items} next={state.next} />
-              <CommitTable commits={items} graph={graph} now={loadedAt ?? 0} />
+              <CommitTable
+                commits={items}
+                graph={graph}
+                now={loadedAt ?? 0}
+                highlightSha={highlightSha}
+              />
             </>
           )}
 

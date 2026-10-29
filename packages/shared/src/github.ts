@@ -268,3 +268,59 @@ export function parseBranchList(json: unknown): ParsedBranchList {
   }
   return { branches, skipped };
 }
+
+// ---------------------------------------------------------------------------------------------
+// Pull requests.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * One pull request from `GET /repos/{owner}/{repo}/pulls`. Only what the Pull requests panel shows
+ * is read: the number, title, state, draft flag, four dates, the head and base branch names, the
+ * author's login and the merge commit SHA. Everything else (bodies, labels, reviewers, e-mail
+ * addresses, repositories of the head and base) is stripped and never reaches the UI.
+ *
+ * `number` and `state` are required: without them a row would say nothing true, so such an entry
+ * is skipped and counted instead. Everything else is optional and becomes absent when missing or
+ * malformed. `head.ref` stays readable when the head repository was deleted (GitHub then sends
+ * `head.repo: null`, which is never read here). `merge_commit_sha` is only a well-formed Git SHA
+ * or absent. It means different things by state (for an open PR it is a throwaway test merge), so
+ * callers must only use it for a merged PR.
+ *
+ * An open PR that also has a merge date contradicts itself, so it is not trusted: skipped.
+ */
+export const githubPullRequestSchema = z
+  .object({
+    number: z.number().int().positive(),
+    state: z.enum(['open', 'closed']),
+    title: lenient(z.string()),
+    draft: lenient(z.boolean()),
+    created_at: lenient(z.string()),
+    updated_at: lenient(z.string()),
+    closed_at: lenient(z.string()),
+    merged_at: lenient(z.string()),
+    merge_commit_sha: lenient(gitShaSchema),
+    head: lenient(z.object({ ref: lenient(z.string()) })),
+    base: lenient(z.object({ ref: lenient(z.string()) })),
+    user: lenient(z.object({ login: lenient(z.string()) })),
+  })
+  .refine((pull) => !(pull.state === 'open' && typeof pull.merged_at === 'string'));
+export type GitHubPullRequest = z.infer<typeof githubPullRequestSchema>;
+
+export interface ParsedPullRequestList {
+  readonly pulls: GitHubPullRequest[];
+  /** Entries that could not be read and were left out. Callers must surface this. */
+  readonly skipped: number;
+}
+
+/** Parses a pull request list one entry at a time. Throws if the response is not a list at all. */
+export function parsePullRequestList(json: unknown): ParsedPullRequestList {
+  const entries = listEnvelopeSchema.parse(json);
+  const pulls: GitHubPullRequest[] = [];
+  let skipped = 0;
+  for (const raw of entries) {
+    const parsed = githubPullRequestSchema.safeParse(raw);
+    if (parsed.success) pulls.push(parsed.data);
+    else skipped += 1;
+  }
+  return { pulls, skipped };
+}

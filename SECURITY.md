@@ -91,10 +91,11 @@ installation, so any change is a deliberate, reviewed decision.
 This is the **intended** permission set. It lives in the GitHub App registration, which this
 repository does not contain, so it **cannot be verified from the code** and has not been checked
 with a live token. The code currently calls only user, installation, repository-list, branch,
-branch-list, commit-list and git-tree endpoints. The commit-list and branch-list endpoints, used
-by the Activity view, are mock-tested only and have **not** been verified live, including which
-permission GitHub requires for them. The code does not use the Pull requests, Issues or Actions
-permissions.
+branch-list, commit-list, pull-request-list and git-tree endpoints. The commit-list, branch-list
+and pull-request-list endpoints, used by the Activity view, are mock-tested and have no recorded
+live evidence, including which permission GitHub requires for them (the pull-request list is
+expected to need Pull requests, read; the maintainer reports that permission is enabled and that
+the pull request list loaded in their own browser, which the repository cannot show). The code does not use the Issues or Actions permissions.
 
 ### Private repository access
 
@@ -243,7 +244,7 @@ user's token**
   for the activity view: commit subjects, author names and logins and branch names are untrusted,
   shown as plain text (control, bidirectional and zero-width characters replaced, length capped),
   and never used to build a URL, except that the default branch name is sent as an encoded `sha`
-  query parameter. Author email addresses and message bodies are dropped when the response is
+  query parameter. Pull request titles, branch names and author logins are treated the same way. Author email addresses and message bodies are dropped when the response is
   parsed, and nothing from a response is echoed into an error message _(implemented;
   mock-tested)_.
 - Per-user cache keys; the cache is cleared on sign-out _(planned)_. **No cache exists today**: the

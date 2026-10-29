@@ -2,6 +2,8 @@ import { REPOSITORY_MESSAGES, describeGitHubError } from '../dashboard/messages.
 import { GitHubApiError } from '../github/client.ts';
 import { MAX_BRANCH_PAGES, MAX_COMMIT_PAGES, ACTIVITY_PAGE_SIZE } from '../github/activity.ts';
 import type { PageNext } from '../github/activity.ts';
+import { MAX_PULL_PAGES, PULL_PAGE_SIZE } from '../github/pulls.ts';
+import type { NotLoadedReason } from './pullLinks.ts';
 import { formatCount } from '../dashboard/format.ts';
 import { MAX_GRAPH_LANES, type HistoryGraph } from './historyGraph.ts';
 
@@ -10,6 +12,8 @@ export const ACTIVITY_MESSAGES = {
   commitsEmpty: 'This repository is empty: it has no commits yet.',
   noCommits: 'GitHub listed no commits for this branch.',
   noBranches: 'GitHub listed no branches for this repository.',
+  noPulls: 'GitHub listed no pull requests for this repository.',
+  mergeNotStated: 'GitHub did not state the merge commit.',
   commitsForbidden:
     "GitHub refused access to this repository's commits. The GitHub App needs read access to Contents and must be installed on this repository.",
   branchesForbidden:
@@ -18,12 +22,16 @@ export const ACTIVITY_MESSAGES = {
     'The commit history could not be found. The branch may no longer exist, or the GitHub App may not have access to this repository.',
   branchesNotFound:
     'The branch list could not be found. The GitHub App may not have access to this repository.',
+  pullsForbidden:
+    "GitHub refused access to this repository's pull requests. The GitHub App may be missing read access to Pull requests, or may not be installed on this repository.",
+  pullsNotFound:
+    'The pull request list could not be found. The GitHub App may not have access to this repository.',
   unusable: "GitHub's answer could not be used, so nothing was loaded from it.",
   unauthorized: 'Your GitHub session has ended. Please sign in again.',
   noUsableDates: 'None of the loaded commits has a usable date, so there is no timeline to draw.',
 } as const;
 
-export type ActivityScope = 'commits' | 'branches';
+export type ActivityScope = 'commits' | 'branches' | 'pulls';
 
 export type ActivityFailureKind =
   'empty' | 'forbidden' | 'not_found' | 'rate_limited' | 'network' | 'server' | 'unusable';
@@ -37,6 +45,18 @@ export interface ActivityFailure {
   /** When a rate limit ends, in epoch milliseconds, if GitHub said. */
   readonly resetAt: number | null;
 }
+
+const FORBIDDEN_TEXT: Record<ActivityScope, string> = {
+  commits: ACTIVITY_MESSAGES.commitsForbidden,
+  branches: ACTIVITY_MESSAGES.branchesForbidden,
+  pulls: ACTIVITY_MESSAGES.pullsForbidden,
+};
+
+const NOT_FOUND_TEXT: Record<ActivityScope, string> = {
+  commits: ACTIVITY_MESSAGES.commitsNotFound,
+  branches: ACTIVITY_MESSAGES.branchesNotFound,
+  pulls: ACTIVITY_MESSAGES.pullsNotFound,
+};
 
 export function describeActivityFailure(
   error: unknown,
@@ -62,10 +82,7 @@ export function describeActivityFailure(
     case 'forbidden':
       return {
         kind: 'forbidden',
-        text:
-          scope === 'commits'
-            ? ACTIVITY_MESSAGES.commitsForbidden
-            : ACTIVITY_MESSAGES.branchesForbidden,
+        text: FORBIDDEN_TEXT[scope],
         retryable: false,
         resetAt: null,
       };
@@ -76,10 +93,7 @@ export function describeActivityFailure(
       if (status === 404) {
         return {
           kind: 'not_found',
-          text:
-            scope === 'commits'
-              ? ACTIVITY_MESSAGES.commitsNotFound
-              : ACTIVITY_MESSAGES.branchesNotFound,
+          text: NOT_FOUND_TEXT[scope],
           retryable: false,
           resetAt: null,
         };
@@ -114,14 +128,19 @@ export const describeCommitFailure = (error: unknown, now?: number): ActivityFai
 export const describeBranchFailure = (error: unknown, now?: number): ActivityFailure =>
   describeActivityFailure(error, 'branches', now);
 
+export const describePullFailure = (error: unknown, now?: number): ActivityFailure =>
+  describeActivityFailure(error, 'pulls', now);
+
 /** Shown while a rate limit blocks loading; the time is the reader's own. */
 export function describeBlockedUntil(resetAt: number): string {
   const time = new Date(resetAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   return `GitHub's rate limit is used up. More can be loaded again after ${time}.`;
 }
 
-export function unreadableMessage(count: number, noun: 'commit' | 'branch'): string {
-  const plural = noun === 'commit' ? 'commits' : 'branches';
+const PLURALS = { commit: 'commits', branch: 'branches', 'pull request': 'pull requests' } as const;
+
+export function unreadableMessage(count: number, noun: keyof typeof PLURALS): string {
+  const plural = PLURALS[noun];
   return `${formatCount(count)} ${count === 1 ? noun : plural} in GitHub's response could not be read and ${count === 1 ? 'was' : 'were'} left out.`;
 }
 
@@ -131,20 +150,26 @@ export function undatedMessage(count: number): string {
 
 /** Why a list is not known to be everything GitHub has, or `null` when nothing is missing. */
 export function partialListMessage(args: {
-  readonly noun: 'commits' | 'branches';
+  readonly noun: 'commits' | 'branches' | 'pull requests';
   readonly next: PageNext | null;
   readonly skipped: number;
 }): string | null {
   const { noun, next, skipped } = args;
   const maxItems = formatCount(
-    ACTIVITY_PAGE_SIZE * (noun === 'commits' ? MAX_COMMIT_PAGES : MAX_BRANCH_PAGES),
+    noun === 'commits'
+      ? ACTIVITY_PAGE_SIZE * MAX_COMMIT_PAGES
+      : noun === 'branches'
+        ? ACTIVITY_PAGE_SIZE * MAX_BRANCH_PAGES
+        : PULL_PAGE_SIZE * MAX_PULL_PAGES,
   );
   const reasons: string[] = [];
   if (next?.kind === 'more') {
     reasons.push(
       noun === 'commits'
         ? 'Older commits have not been loaded.'
-        : 'More branches have not been loaded.',
+        : noun === 'branches'
+          ? 'More branches have not been loaded.'
+          : 'Older pull requests have not been loaded.',
     );
   }
   if (next?.kind === 'capped') {
@@ -154,7 +179,7 @@ export function partialListMessage(args: {
   }
   if (skipped > 0) {
     reasons.push(
-      `${unreadableMessage(skipped, noun === 'commits' ? 'commit' : 'branch')} The list is incomplete.`,
+      `${unreadableMessage(skipped, noun === 'commits' ? 'commit' : noun === 'branches' ? 'branch' : 'pull request')} The list is incomplete.`,
     );
   }
   return reasons.length === 0 ? null : reasons.join(' ');
@@ -230,3 +255,26 @@ export function historyGraphNotes(graph: HistoryGraph, next: PageNext | null): s
   }
   return notes;
 }
+
+/**
+ * What the Merge commit cell says when the PR's commit is not among the loaded ones. It never
+ * implies the commit does not exist: only that it is not in what has been loaded.
+ */
+export function notLoadedText(reason: NotLoadedReason): string {
+  switch (reason) {
+    case 'loading':
+      return 'Merge commit not loaded (the commits are still loading).';
+    case 'failed':
+      return 'Merge commit not loaded (the commits could not be loaded).';
+    case 'more':
+      return 'Merge commit not loaded. It may be among the older commits, which can be loaded above.';
+    case 'capped':
+      return 'Merge commit not loaded. The commits beyond the loading limit cannot be loaded here.';
+    default:
+      return 'Merge commit not loaded. It is not among the loaded commits of the default branch (the pull request may have been merged into another branch).';
+  }
+}
+
+/** The accessible name of the Pull requests table. */
+export const PULLS_TABLE_CAPTION =
+  'Loaded pull requests, most recently updated first, as GitHub listed them';

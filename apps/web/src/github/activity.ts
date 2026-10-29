@@ -121,12 +121,12 @@ export function toBranchItem(branch: GitHubBranchListEntry): BranchItem {
   };
 }
 
-async function loadActivityPage<Raw, Item>(args: {
+export async function loadActivityPage<Raw, Item>(args: {
   readonly token: string;
   readonly target: RepositoryRef;
   /** The query part of the first page's URL, after `?`. */
   readonly query: URLSearchParams;
-  readonly path: 'commits' | 'branches';
+  readonly path: 'commits' | 'branches' | 'pulls';
   readonly cursor: PageCursor | null;
   readonly maxPages: number;
   readonly parse: (json: unknown) => { readonly entries: readonly Raw[]; readonly skipped: number };

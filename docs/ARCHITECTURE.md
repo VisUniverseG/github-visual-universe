@@ -8,20 +8,20 @@ differ. `PRIVACY.md`, `SECURITY.md` and the Phase 0 assessment have been aligned
 
 ## Status
 
-| Component                          | Status                                                                                                                                                                                    |
-| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| npm workspaces monorepo            | ✅ Implemented                                                                                                                                                                            |
-| `packages/shared` (contracts)      | ✅ `/health`, auth-broker and GitHub response schemas (Zod, lenient optional fields)                                                                                                      |
-| `apps/api` (Hono)                  | ✅ `GET /health`, `POST /auth/token`, `POST /auth/revoke`                                                                                                                                 |
-| `apps/web` (React + Vite)          | ✅ Sign-in (PKCE), Overview dashboard, Architecture view, Activity view, Disconnect; build-time CSP                                                                                       |
-| CI checks                          | ✅ Implemented (not yet run on GitHub)                                                                                                                                                    |
-| Authentication design              | ✅ Decided (ADR 0001, amended after Phase 2)                                                                                                                                              |
-| GitHub authorization spike harness | ✅ Prepared, offline-tested. Only the anonymous checks `ANON-01` to `ANON-03` have been run live; **no account-dependent check has**.                                                     |
-| GitHub App registration            | 🟡 Reported by the maintainer as created and installed, with credentials kept locally. Not verifiable from the repository.                                                                |
-| Auth broker + sign-in (PKCE)       | ✅ Implemented and mock-tested. 🟡 Live use is **maintainer-reported only** (not reproducible from the repository); token revocation is not verified live. See [Known gaps](#known-gaps). |
-| GitHub data layer (read-only)      | 🟡 Repository discovery, `GET /user`, branch head and file tree, commit and branch lists (mock-tested only); the rest is later                                                            |
-| Visualizations                     | 🟡 Overview, language chart, file-tree architecture and a per-repository activity timeline done; the rest (Phases 7–10)                                                                   |
-| Deployment (Pages + Render)        | ⏳ Planned (Phase 11)                                                                                                                                                                     |
+| Component                          | Status                                                                                                                                                                                             |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| npm workspaces monorepo            | ✅ Implemented                                                                                                                                                                                     |
+| `packages/shared` (contracts)      | ✅ `/health`, auth-broker and GitHub response schemas (Zod, lenient optional fields)                                                                                                               |
+| `apps/api` (Hono)                  | ✅ `GET /health`, `POST /auth/token`, `POST /auth/revoke`                                                                                                                                          |
+| `apps/web` (React + Vite)          | ✅ Sign-in (PKCE), Overview dashboard, Architecture view, Activity view, Disconnect; build-time CSP                                                                                                |
+| CI checks                          | ✅ Implemented (not yet run on GitHub)                                                                                                                                                             |
+| Authentication design              | ✅ Decided (ADR 0001, amended after Phase 2)                                                                                                                                                       |
+| GitHub authorization spike harness | ✅ Prepared, offline-tested. Only the anonymous checks `ANON-01` to `ANON-03` have been run live; **no account-dependent check has**.                                                              |
+| GitHub App registration            | 🟡 Reported by the maintainer as created and installed, with credentials kept locally. Not verifiable from the repository.                                                                         |
+| Auth broker + sign-in (PKCE)       | ✅ Implemented and mock-tested. 🟡 Live use is **maintainer-reported only** (not reproducible from the repository); token revocation is not verified live. See [Known gaps](#known-gaps).          |
+| GitHub data layer (read-only)      | 🟡 Repository discovery, `GET /user`, branch head and file tree, commit, branch and pull request lists (mock-tested; the pull request list is also maintainer-reported working); the rest is later |
+| Visualizations                     | 🟡 Overview, language chart, file-tree architecture, a per-repository activity timeline, history graph and pull request list done; the rest (Phases 7–10)                                          |
+| Deployment (Pages + Render)        | ⏳ Planned (Phase 11)                                                                                                                                                                              |
 
 ## Repository layout
 
@@ -305,7 +305,8 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
   - _Nothing is stored:_ the listing, including any folders loaded later, lives in memory while the
     view is open and is dropped when you go back. There is no cache.
 - **Activity view.** The detail panel's "View activity" button, next to "View architecture", opens a
-  read-only view of one repository's recent commits on its **default branch** and its branches.
+  read-only view of one repository's recent commits on its **default branch**, its branches and,
+  on request, its pull requests.
   The dashboard keeps its state (it is hidden, not unmounted) and one view is open at a time
   (`{ kind: 'architecture' | 'activity'; repoId }`). It needs no backend change and no new
   permission, dependency or storage: the browser calls `api.github.com` through the same `githubGet`
@@ -355,6 +356,65 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
     examined commit has exactly one outcome in the layout (drawn, dropped for lack of a lane, listed
     above, or unreadable); a repeated copy's entries are not examined. Only the
     default branch's loaded commits are drawn: not other branches, pull requests or file changes.
+  - _Pull requests (read-only, on request):_ a third panel on the Activity page, between Commits
+    and Branches. It lives on this page, not in a view of its own, because matching a merged pull
+    request to a commit needs the commits that the history graph has loaded, and a separate view
+    would either lose them or fetch them again. **Nothing about pull requests is requested when
+    the page opens**: the panel is a "Load pull requests" button, and the list (with its own paging,
+    failure and rate-limit handling) exists only after it is pressed.
+    - _Request:_ `GET /repos/{owner}/{repo}/pulls?state=all&sort=updated&direction=desc&per_page=100`
+      through the same `githubGet` wrapper (GET only). Later pages are fetched only when asked
+      ("Load older pull requests") by following GitHub's `Link: rel="next"` URL, at most **5 pages
+      (500 pull requests)**; nothing loads in advance, nothing is retried or polled, and there is
+      **no request per pull request**. No GraphQL, no new permission, dependency, endpoint or
+      storage. It needs the **Pull requests (read)** permission, which the maintainer reports is
+      enabled; the repository cannot show this.
+    - _What is kept:_ per pull request its number, title, state, draft flag, the four dates, the
+      head and base branch names, the author's login and its merge commit SHA. Bodies, labels,
+      reviewers, e-mail addresses and the head and base repositories are dropped by the shared
+      schema, so a pull request whose head repository was deleted is read like any other. Text is
+      shown through the same sanitizer as commits. An entry without a usable number or state, or
+      an open one that also has a merge date (a contradiction), is skipped and counted, and the
+      list says it is incomplete. Missing branch names, author, title or dates are shown as absent
+      ("not stated", "Unknown", "(no title)", "date unknown"), never as zero or an invented value.
+    - _States:_ **Open**; **Draft** (open, and GitHub said so; an open PR without the flag is shown
+      as open, and says its draft status was not stated); **Merged** (closed, with a merge date);
+      **Closed** (closed without one). Each row shows the number and title, the state,
+      base ← head, the author, and the date that fits the state (opened, merged or closed, in UTC).
+    - _Linking a merged pull request to the history graph:_ `linkMergeCommit`
+      (`apps/web/src/activity/pullLinks.ts`) compares the PR's `merge_commit_sha`, **as a whole and
+      exactly**, with the SHAs of the commits already loaded. A match becomes a button that moves
+      focus to that commit's row in the table (it is not a URL fragment, which could disturb the
+      sign-in address handling). Nothing else is compared: not branch names, titles, dates,
+      abbreviated or near-miss SHAs (an abbreviated one is not even accepted as a SHA). GitHub
+      names a commit on the base branch for every way of merging (the merge commit, the single
+      squashed commit, or the last rebased commit), so all three link the same way; the list data
+      cannot tell a squash from a rebase, and the view does not claim to. Only a commit with two
+      or more parents is called a merge commit. A merge commit that is not loaded says **"Merge
+      commit not loaded"**, with the reason: the commits are still loading or failed, older commits
+      can be loaded above, the loading limit was reached, or it is not among the loaded commits of
+      the default branch (the pull request may have been merged into another branch). For a PR
+      that is not merged, GitHub's `merge_commit_sha` is a throwaway test merge, so it is dropped
+      and never linked, and a merged PR without a stated SHA says so.
+    - _Failures:_ the list loads and fails independently of commits and branches. A 401 ends the
+      session once, together with the other lists. A 403 says the GitHub App may be missing read
+      access to Pull requests (or is not installed on the repository). A rate limit pauses further
+      requests until GitHub's reset time and offers no retry. A failed later page keeps the loaded
+      rows and retries the same page. An empty list is shown as **Empty**. Messages are fixed
+      strings: nothing from a response is echoed.
+    - _Accessibility:_ one table with a caption, column headers and a row header per row; the arrow
+      in base ← head has a spoken equivalent; the state is always a word, the colour only backs it
+      up; the link button's name says which commit it shows.
+    - _Status:_ **mock-tested, and maintainer-reported working** in the maintainer's own browser
+      with the local app: the pull request list loaded, a merged pull request's commit button took
+      the reader to the matching commit row, and the row was focused, scrolled into view and
+      highlighted, as intended. That is a report, not recorded evidence: the repository cannot
+      reproduce it, and it does not say which repository, how many pages, which merge method, or
+      whether light and dark mode were both looked at. **No automated browser test exists.** Not
+      reported, so unverified live: paging beyond the first page, the 403, rate-limit and other
+      error states, a repository with many pull requests, forks (including deleted head
+      repositories), and `merge_commit_sha` for each of the merge, squash and rebase methods (it is
+      GitHub's documented meaning that the tests assume).
   - _Partial data:_ each list is labelled **Complete** (the last page was reached and nothing was
     skipped), **Partial** (more exists, the cap was reached, or entries were unreadable and
     skipped and counted), **Partial, with an error** (a later page failed) or **Failed**. The count
@@ -418,6 +478,10 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
     one small repository (see "Architecture view limits"). These are separate reports. **No evidence
     covers the whole flow (sign-in, then dashboard, then architecture view) as one verified live
     run.**
+  - _Maintainer-reported (Pull requests panel):_ the list loaded and the merged-pull-request
+    commit button, row focus, scrolling and highlight worked in the maintainer's own browser with
+    the local app. Details and what the report does not cover are under "Pull requests panel
+    limits".
   - _Mock-tested only:_ every automated test uses mocks.
   - _Not verified live:_ the dashboard's extra repository fields (read from GitHub's documented
     response), `GET /user`, and token revocation. Account-dependent behaviour (user isolation,
@@ -438,9 +502,15 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
   repository, a branch name containing `/`, an organization repository, submodules and symlinks
   (covered by mocked tests only).
 - **Activity view limits:** default branch only, at most 500 commits and 500 branches per view, a history
-  graph of the loaded commits only (no other branches, no pull-request relationships, no zoom,
-  pan or export), no per-commit detail. **Not verified live:**
-  the commit and branch endpoints, their permission requirements, paging, a repository with merges
+  graph of the loaded commits only (no other branches, no pull-request relationships beyond the
+  merge-commit links below, no zoom, pan or export), no per-commit detail.
+- **Pull requests panel limits:** the 500 most recently updated pull requests at most; a list, not a
+  graph (no review, comment, file or check detail, no head-to-base network); a merged pull request
+  is linked only to a commit that is loaded, so older merges (and merges into other branches) show
+  "Merge commit not loaded"; squash and rebase merges are not told apart; no filters or search.
+  **Mock-tested, and maintainer-reported working in a local browser** (no recorded evidence, no
+  automated browser test; see the Pull requests _Status_ above for what was and was not reported).
+  **Not verified live:** the commit and branch endpoints, their permission requirements, paging, a repository with merges
   (and so the history graph, including whether real orderings put every parent below its child),
   one with more than 100 commits, one with many branches, an empty repository, an organization
   repository, and a default branch name containing `/` (mock-tested only).

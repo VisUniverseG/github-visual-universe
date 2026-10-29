@@ -253,3 +253,6 @@ export function usePagedList<T>({ loadPage, describe, onUnauthorized }: PagedLis
 
   return { state, loadMore, retry, blocked };
 }
+
+/** What `usePagedList` returns: the list's state and the ways to ask for more of it. */
+export type PagedList<T> = ReturnType<typeof usePagedList<T>>;
