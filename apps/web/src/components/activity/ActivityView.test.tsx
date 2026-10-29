@@ -315,3 +315,135 @@ describe('ActivityView', () => {
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('ActivityView with full pages of commits', () => {
+  const PAGE_URL = `${GH}/repositories/1/commits`;
+  const bulkSha = (n: number) => n.toString(16).padStart(40, '0');
+  /** Commits numbered `from` to `from + count - 1`, an hour apart in 2025, so every date is usable. */
+  const bulkCommits = (from: number, count: number) =>
+    Array.from({ length: count }, (_, i) => {
+      const n = from + i;
+      return {
+        sha: bulkSha(n),
+        commit: {
+          message: `Subject ${String(n)}`,
+          author: {
+            name: 'Author',
+            date: new Date(Date.UTC(2025, 0, 1) + n * 3_600_000).toISOString(),
+          },
+        },
+        author: { login: 'login' },
+        parents: [{ sha: bulkSha(n + 100_000) }],
+      };
+    });
+
+  /**
+   * GitHub's paging: the first page comes from the repository route, later pages from the `Link`
+   * URLs, which carry `per_page`, `sha` and `page`. Every page has 100 commits except the last.
+   * `served` records which page numbers were asked for; a page past the last one is an error.
+   */
+  function pagedCommits(options: { pages: number; lastSize: number; nextOnLast: boolean }) {
+    const served: number[] = [];
+    const respond = (page: number): Response => {
+      const size = page === options.pages ? options.lastSize : 100;
+      const body = bulkCommits((page - 1) * 100 + 1, size);
+      return page < options.pages || options.nextOnLast
+        ? Response.json(body, next(`${PAGE_URL}?per_page=100&sha=main&page=${String(page + 1)}`))
+        : Response.json(body);
+    };
+    const routes: Record<string, Handler> = {
+      [COMMITS]: () => {
+        served.push(1);
+        return respond(1);
+      },
+      [COMMITS_PAGE_2]: ({ url }) => {
+        const page = Number(url.searchParams.get('page'));
+        served.push(page);
+        return page > options.pages ? new Response('{}', { status: 500 }) : respond(page);
+      },
+    };
+    return { routes, served };
+  }
+
+  // Up to 500 table rows are drawn after each page, so these wait longer than the others.
+  const SLOW = { timeout: 10_000 };
+  const loadOlder = () => {
+    fireEvent.click(screen.getByText('Load older commits'));
+  };
+  const rowsOf = (panel: HTMLElement) => panel.querySelectorAll('tbody tr');
+
+  it('is Complete when a short final page follows full pages, and every page is appended', async () => {
+    const { routes, served } = pagedCommits({ pages: 3, lastSize: 50, nextOnLast: false });
+    open(routes);
+
+    expect(await screen.findByText('Partial · 100 commits loaded', {}, SLOW)).toBeTruthy();
+    loadOlder();
+    expect(await screen.findByText('Partial · 200 commits loaded', {}, SLOW)).toBeTruthy();
+    loadOlder();
+    expect(await screen.findByText('Complete · 250 commits loaded', {}, SLOW)).toBeTruthy();
+
+    const panel = commitsPanel();
+    expect(rowsOf(panel)).toHaveLength(250);
+    expect(within(panel).getByText('Subject 1')).toBeTruthy();
+    expect(within(panel).getByText('Subject 100')).toBeTruthy();
+    expect(within(panel).getByText('Subject 101')).toBeTruthy();
+    expect(within(panel).getByText('Subject 250')).toBeTruthy();
+    // Nothing is missing, so there is no warning and nothing more to load.
+    expect(within(panel).queryByText(/have not been loaded/)).toBeNull();
+    expect(within(panel).queryByText(/Loading stops at/)).toBeNull();
+    expect(screen.queryByText('Load older commits')).toBeNull();
+    expect(served).toEqual([1, 2, 3]);
+  }, 30_000);
+
+  it('stops at 500 commits when page 5 still has a next link: warns, offers no more, asks for no sixth page', async () => {
+    const { routes, served } = pagedCommits({ pages: 5, lastSize: 100, nextOnLast: true });
+    const net = open(routes);
+
+    expect(await screen.findByText('Partial · 100 commits loaded', {}, SLOW)).toBeTruthy();
+    for (const loaded of [200, 300, 400, 500]) {
+      loadOlder();
+      expect(
+        await screen.findByText(`Partial · ${String(loaded)} commits loaded`, {}, SLOW),
+      ).toBeTruthy();
+    }
+
+    const panel = commitsPanel();
+    // The cap: the warning is shown, and it is the only reason the list is partial.
+    expect(
+      within(panel).getByText(
+        'Loading stops at 500 commits, and GitHub has more. The rest cannot be loaded here.',
+      ),
+    ).toBeTruthy();
+    expect(within(panel).queryByText(/Older commits have not been loaded/)).toBeNull();
+    expect(within(panel).queryByText(/Complete/)).toBeNull();
+    expect(
+      within(panel).getByText(/Older commits are not loaded, so earlier activity/),
+    ).toBeTruthy();
+    // No way to ask for more: no "Load older commits" button, or any other button in the panel.
+    expect(screen.queryByText('Load older commits')).toBeNull();
+    expect(screen.queryByText('Loading older commits…')).toBeNull();
+    expect(panel.querySelectorAll('button')).toHaveLength(0);
+    // Every page was appended, in order.
+    expect(rowsOf(panel)).toHaveLength(500);
+    expect(within(panel).getByText('Subject 1')).toBeTruthy();
+    expect(within(panel).getByText('Subject 500')).toBeTruthy();
+
+    // Exactly five commit requests; the later ones followed GitHub's URLs with their query.
+    expect(served).toEqual([1, 2, 3, 4, 5]);
+    const commitRequests = net.requests.filter((r) => r.url.pathname.endsWith('/commits'));
+    expect(commitRequests).toHaveLength(5);
+    expect(commitRequests.map((r) => r.url.searchParams.get('page'))).toEqual([
+      null,
+      '2',
+      '3',
+      '4',
+      '5',
+    ]);
+    expect(
+      commitRequests.every(
+        (r) =>
+          r.url.searchParams.get('per_page') === '100' && r.url.searchParams.get('sha') === 'main',
+      ),
+    ).toBe(true);
+  }, 60_000);
+});

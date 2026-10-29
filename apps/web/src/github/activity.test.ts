@@ -275,6 +275,62 @@ describe('paging', () => {
 
     expect(page.next).toEqual({ kind: 'end' });
   });
+
+  it('ends the list on a short final page that follows a full page of 100', async () => {
+    const path = '/repositories/1/commits';
+    const commitsFrom = (from: number, count: number) =>
+      Array.from({ length: count }, (_, i) =>
+        rawCommit({ sha: (from + i).toString(16).padStart(40, '0') }),
+      );
+    stubNetwork({
+      [`GET ${GH}/repos/octo/alpha/commits`]: () =>
+        Response.json(commitsFrom(1, ACTIVITY_PAGE_SIZE), { headers: { link: link(path, 2) } }),
+      // The last page has no `rel="next"`, and fewer than 100 entries.
+      [`GET ${GH}${path}`]: () => Response.json(commitsFrom(ACTIVITY_PAGE_SIZE + 1, 50)),
+    });
+
+    const first = await loadCommitPage(TEST_TOKEN, TARGET, null);
+    expect(first.items).toHaveLength(ACTIVITY_PAGE_SIZE);
+    expect(first.next.kind).toBe('more');
+    const cursor = first.next.kind === 'more' ? first.next.cursor : null;
+
+    const last = await loadCommitPage(TEST_TOKEN, TARGET, cursor);
+
+    expect(last.items).toHaveLength(50);
+    expect(last.items[0]?.sha).toBe((ACTIVITY_PAGE_SIZE + 1).toString(16).padStart(40, '0'));
+    expect(last.items[49]?.sha).toBe((ACTIVITY_PAGE_SIZE + 50).toString(16).padStart(40, '0'));
+    expect(last.skipped).toBe(0);
+    expect(last.next).toEqual({ kind: 'end' });
+  });
+
+  it("follows GitHub's next URL exactly, so per_page and sha stay as GitHub gave them", async () => {
+    const path = '/repositories/1/commits';
+    // What GitHub builds from the first request's query, with the branch name encoded.
+    const nextUrl = `${GH}${path}?per_page=100&sha=release%2Fv1&page=2`;
+    const net = stubNetwork({
+      [`GET ${GH}/repos/octo/alpha/commits`]: () =>
+        Response.json([rawCommit()], { headers: { link: `<${nextUrl}>; rel="next"` } }),
+      [`GET ${GH}${path}`]: () => Response.json([]),
+    });
+    const target = { ...TARGET, branch: 'release/v1' };
+
+    const first = await loadCommitPage(TEST_TOKEN, target, null);
+    const firstUrl = net.requests[0]?.url;
+    expect(firstUrl?.searchParams.get('per_page')).toBe(String(ACTIVITY_PAGE_SIZE));
+    expect(firstUrl?.searchParams.get('sha')).toBe('release/v1');
+    const cursor = first.next.kind === 'more' ? first.next.cursor : null;
+    expect(cursor?.nextUrl).toBe(nextUrl);
+
+    await loadCommitPage(TEST_TOKEN, target, cursor);
+
+    // The later page is requested at GitHub's URL as given: nothing is rebuilt, added or dropped.
+    const followed = net.requests[1]?.url;
+    expect(followed?.href).toBe(nextUrl);
+    expect(followed?.searchParams.get('per_page')).toBe('100');
+    expect(followed?.searchParams.get('sha')).toBe('release/v1');
+    expect(followed?.searchParams.get('page')).toBe('2');
+    expect([...(followed?.searchParams.keys() ?? [])]).toEqual(['per_page', 'sha', 'page']);
+  });
 });
 
 describe('loadCommitPage failures', () => {

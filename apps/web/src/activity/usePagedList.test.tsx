@@ -1,11 +1,19 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ActivityPage, PageCursor, PageNext } from '../github/activity.ts';
+import {
+  loadCommitPage,
+  type ActivityPage,
+  type CommitItem,
+  type PageCursor,
+  type PageNext,
+} from '../github/activity.ts';
 import { GitHubApiError } from '../github/client.ts';
+import { TEST_TOKEN, createFakeFetch } from '../testing/fakeFetch.ts';
 import { describeCommitFailure } from './messages.ts';
 import { statusOf, usePagedList, type PagedListState } from './usePagedList.ts';
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
@@ -468,5 +476,80 @@ describe('usePagedList', () => {
       expect(result.current.state.phase).toBe('loading');
       expect(result.current.state.items).toEqual([]);
     });
+  });
+});
+
+describe('usePagedList with the real commit loader', () => {
+  const GH = 'https://api.github.com';
+  const sha = (n: number) => n.toString(16).padStart(40, '0');
+  const commitsFrom = (from: number, count: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      sha: sha(from + i),
+      commit: { message: `Subject ${String(from + i)}` },
+    }));
+  const nextLink = (page: number) =>
+    `<${GH}/repositories/1/commits?per_page=100&sha=main&page=${String(page)}>; rel="next"`;
+
+  it('reads pages 1 to 5 in turn, ends capped while GitHub still offers more, and asks for no sixth', async () => {
+    const net = createFakeFetch({
+      [`GET ${GH}/repos/octo/alpha/commits`]: () =>
+        Response.json(commitsFrom(1, 100), { headers: { link: nextLink(2) } }),
+      // Every later page is full and still carries a next link, even page 5.
+      [`GET ${GH}/repositories/1/commits`]: ({ url }) => {
+        const page = Number(url.searchParams.get('page'));
+        return Response.json(commitsFrom((page - 1) * 100 + 1, 100), {
+          headers: { link: nextLink(page + 1) },
+        });
+      },
+    });
+    vi.stubGlobal('fetch', net.fetch);
+    const commitRequests = () => net.requests.filter((r) => r.url.pathname.endsWith('/commits'));
+
+    // Stable references, as the hook requires.
+    const onUnauthorized = vi.fn();
+    const loadPage = (cursor: PageCursor | null, signal: AbortSignal) =>
+      loadCommitPage(TEST_TOKEN, { owner: 'octo', name: 'alpha', branch: 'main' }, cursor, signal);
+    const { result } = renderHook(() =>
+      usePagedList<CommitItem>({ loadPage, describe: describeCommitFailure, onUnauthorized }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.state.items).toHaveLength(100);
+    });
+    expect(result.current.state.next?.kind).toBe('more');
+    expect(commitRequests()).toHaveLength(1);
+
+    for (const total of [200, 300, 400, 500]) {
+      act(() => {
+        result.current.loadMore();
+      });
+      await waitFor(() => {
+        expect(result.current.state.items).toHaveLength(total);
+      });
+      // Each page is appended after the ones before it.
+      expect(result.current.state.items.at(-1)?.sha).toBe(sha(total));
+    }
+
+    const { state } = result.current;
+    expect(state.items.map((item) => item.sha)).toEqual(
+      Array.from({ length: 500 }, (_, i) => sha(i + 1)),
+    );
+    expect(state.next).toEqual({ kind: 'capped' });
+    expect(statusOf(state)).toBe('partial');
+    expect(state.error).toBeNull();
+    expect(commitRequests()).toHaveLength(5);
+
+    // Nothing more can be asked for, however often it is tried.
+    act(() => {
+      result.current.loadMore();
+      result.current.loadMore();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(commitRequests()).toHaveLength(5);
+    expect(result.current.state.items).toHaveLength(500);
+    expect(result.current.state.loadingMore).toBe(false);
+    expect(onUnauthorized).not.toHaveBeenCalled();
   });
 });
