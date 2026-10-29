@@ -338,6 +338,68 @@ describe('githubCommitSchema', () => {
     expect(parsed.commit.author?.name).toBeUndefined();
     expect(parsed.commit.committer?.date).toBeUndefined();
   });
+
+  describe('parents', () => {
+    const FIRST = 'b'.repeat(40);
+    const SECOND = 'c'.repeat(40);
+
+    it('keeps the parent SHAs, in order, and nothing else about a parent', () => {
+      const parsed = githubCommitSchema.parse(
+        commit({
+          parents: [
+            { sha: FIRST, url: 'https://api.github.com/x', html_url: 'https://github.com/x' },
+            { sha: SECOND },
+          ],
+        }),
+      );
+      expect(parsed.parents).toEqual([FIRST, SECOND]);
+      expect(JSON.stringify(parsed)).not.toContain('github.com/x');
+    });
+
+    it('knows a root commit: an empty list, not an absent one', () => {
+      expect(githubCommitSchema.parse(commit({ parents: [] })).parents).toEqual([]);
+    });
+
+    it.each([
+      ['a parent that is not an object', 'bbbb'],
+      ['a null parent', null],
+      ['a parent without a sha', {}],
+      ['a parent whose sha is not a Git object id', { sha: 'main' }],
+      ['a parent whose sha is not text', { sha: 7 }],
+      ['a parent whose sha is too short', { sha: 'b'.repeat(39) }],
+    ])('keeps the place of %s as null, so the count and the order survive', (_name, bad) => {
+      const parsed = githubCommitSchema.parse(commit({ parents: [bad, { sha: SECOND }] }));
+      expect(parsed.parents).toEqual([null, SECOND]);
+    });
+
+    it('accepts 64-character SHAs, as in repositories that use SHA-256', () => {
+      const long = 'd'.repeat(64);
+      expect(githubCommitSchema.parse(commit({ parents: [{ sha: long }] })).parents).toEqual([
+        long,
+      ]);
+    });
+
+    it('does not fail the commit when every parent is unreadable', () => {
+      const parsed = githubCommitSchema.parse(commit({ parents: [1, 'x', {}] }));
+      expect(parsed.parents).toEqual([null, null, null]);
+      expect(parsed.sha).toBe(SHA);
+    });
+
+    it('still treats a parents field that is not a list as absent', () => {
+      expect(githubCommitSchema.parse(commit({ parents: { sha: FIRST } })).parents).toBeUndefined();
+      // `null` is passed through as "not stated", as it always was.
+      expect(githubCommitSchema.parse(commit({ parents: null })).parents).toBeNull();
+    });
+
+    it('carries parents through a commit list, with the skipped count unchanged', () => {
+      const result = parseCommitList([
+        commit({ parents: [{ sha: FIRST }, { sha: SECOND }] }),
+        { sha: 'bad' },
+      ]);
+      expect(result.commits[0]?.parents).toEqual([FIRST, SECOND]);
+      expect(result.skipped).toBe(1);
+    });
+  });
 });
 
 describe('parseCommitList', () => {

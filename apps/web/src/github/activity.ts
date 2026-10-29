@@ -20,7 +20,7 @@ import { assertSafeRepository, type RepositoryRef } from './tree.ts';
  * {@link MAX_BRANCH_PAGES} pages are ever read, so nothing here can loop or fetch without bound.
  *
  * Only what the view shows is kept: for a commit, the first line of its message, the author's
- * name and GitHub login, a date and the number of parents; for a branch, its name, head SHA and
+ * name and GitHub login, a date and the parents' SHAs; for a branch, its name, head SHA and
  * protection flag. Email addresses are never read (the shared schema drops them). Every string
  * that comes from a repository is untrusted: it goes through `displayText` and is only ever shown
  * as text, never put in a URL.
@@ -63,6 +63,12 @@ export interface CommitItem {
   readonly date: string | null;
   /** `null` when GitHub did not say. A merge has more than one. */
   readonly parentCount: number | null;
+  /**
+   * The parents' SHAs in GitHub's order (the first is the mainline), for the history graph.
+   * `null` when GitHub did not say. A parent that could not be read keeps its place as `null`,
+   * so the length always equals `parentCount`. An empty list is a root commit.
+   */
+  readonly parentShas: readonly (string | null)[] | null;
 }
 
 export interface BranchItem {
@@ -103,6 +109,7 @@ export function toCommitItem(commit: GitHubCommit): CommitItem {
     authorLogin: login === null ? null : displayText(login),
     date: validIsoDate(commit.commit.author?.date) ?? validIsoDate(commit.commit.committer?.date),
     parentCount: commit.parents?.length ?? null,
+    parentShas: commit.parents ?? null,
   };
 }
 

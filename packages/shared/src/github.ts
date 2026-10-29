@@ -185,11 +185,22 @@ export function parseGitTree(json: unknown): ParsedGitTree {
 // ---------------------------------------------------------------------------------------------
 
 /**
+ * One parent of a commit, reduced to its SHA. A parent that cannot be read (no object, no `sha`,
+ * or a `sha` that is not a Git object id) becomes `null` rather than failing the commit or
+ * disappearing, so the number and the order of the parents are always kept: the first parent is
+ * the mainline, and a commit with an unreadable parent is never mistaken for a root commit.
+ */
+const commitParentSchema = z.unknown().transform((raw): string | null => {
+  const parsed = z.object({ sha: gitShaSchema }).safeParse(raw);
+  return parsed.success ? parsed.data.sha : null;
+});
+
+/**
  * One commit from `GET /repos/{owner}/{repo}/commits`. Only what the Activity view shows is read:
  * the id, the message (the caller keeps its first line only), the author's name and date, the
  * committer's date as a fallback, the GitHub account when the author's email matches one, and the
- * parents (only their number is used, to tell merges). Author and committer **email addresses are
- * never read**: unknown fields are stripped, so they cannot reach the UI.
+ * parents (their SHAs, to tell merges and to draw the history graph). Author and committer
+ * **email addresses are never read**: unknown fields are stripped, so they cannot reach the UI.
  *
  * Everything except `sha` and the `commit` object is optional and becomes absent (`undefined`, or
  * `null` if GitHub sent `null`: treat both as "not there") when missing or malformed. `author` (the
@@ -203,7 +214,7 @@ export const githubCommitSchema = z.object({
     committer: lenient(z.object({ date: lenient(z.string()) })),
   }),
   author: lenient(z.object({ login: lenient(z.string()) })),
-  parents: lenient(z.array(z.unknown())),
+  parents: lenient(z.array(commitParentSchema)),
 });
 export type GitHubCommit = z.infer<typeof githubCommitSchema>;
 

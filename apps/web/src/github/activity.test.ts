@@ -100,6 +100,7 @@ describe('loadCommitPage', () => {
         authorLogin: 'ada',
         date: '2026-10-01T10:00:00Z',
         parentCount: 1,
+        parentShas: [PARENT],
       },
     ]);
     expect(page.skipped).toBe(0);
@@ -150,6 +151,7 @@ describe('loadCommitPage', () => {
       authorLogin: null,
       date: null,
       parentCount: null,
+      parentShas: null,
     });
   });
 
@@ -177,10 +179,47 @@ describe('loadCommitPage', () => {
   });
 
   it('counts merges by their parents, and unknown parents as unknown', () => {
-    const merge = toCommitItem({ sha: SHA, commit: {}, parents: [{}, {}] });
+    const merge = toCommitItem({ sha: SHA, commit: {}, parents: [null, null] });
     const root = toCommitItem({ sha: SHA, commit: {}, parents: [] });
     expect(merge.parentCount).toBe(2);
     expect(root.parentCount).toBe(0);
+  });
+
+  it('keeps the parents in order, an unreadable one as null, and a root as an empty list', () => {
+    const other = 'c'.repeat(40);
+    const merge = toCommitItem({ sha: SHA, commit: {}, parents: [PARENT, other] });
+    const odd = toCommitItem({ sha: SHA, commit: {}, parents: [null, other] });
+    const root = toCommitItem({ sha: SHA, commit: {}, parents: [] });
+    const unknown = toCommitItem({ sha: SHA, commit: {} });
+
+    expect(merge.parentShas).toEqual([PARENT, other]);
+    expect(odd.parentShas).toEqual([null, other]);
+    expect(odd.parentCount).toBe(2);
+    expect(root.parentShas).toEqual([]);
+    expect(unknown.parentShas).toBeNull();
+    expect(unknown.parentCount).toBeNull();
+  });
+
+  it('reads parent SHAs from a real-shaped response, and drops everything else about a parent', async () => {
+    const other = 'c'.repeat(40);
+    stubNetwork({
+      [`GET ${GH}/repos/octo/alpha/commits`]: () =>
+        Response.json([
+          rawCommit({
+            parents: [
+              { sha: PARENT, url: 'https://api.github.com/p', html_url: 'https://github.test/p' },
+              { sha: 'not-a-sha' },
+              { sha: other },
+            ],
+          }),
+        ]),
+    });
+
+    const page = await loadCommitPage(TEST_TOKEN, TARGET, null);
+
+    expect(page.items[0]?.parentShas).toEqual([PARENT, null, other]);
+    expect(page.items[0]?.parentCount).toBe(3);
+    expect(JSON.stringify(page)).not.toContain('github.test');
   });
 
   it('skips and counts entries that cannot be read', async () => {

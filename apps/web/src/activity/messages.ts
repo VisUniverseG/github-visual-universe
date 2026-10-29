@@ -3,6 +3,7 @@ import { GitHubApiError } from '../github/client.ts';
 import { MAX_BRANCH_PAGES, MAX_COMMIT_PAGES, ACTIVITY_PAGE_SIZE } from '../github/activity.ts';
 import type { PageNext } from '../github/activity.ts';
 import { formatCount } from '../dashboard/format.ts';
+import { MAX_GRAPH_LANES, type HistoryGraph } from './historyGraph.ts';
 
 /** Fixed, user-facing strings. Nothing from GitHub's responses is ever echoed into them. */
 export const ACTIVITY_MESSAGES = {
@@ -157,4 +158,75 @@ export function partialListMessage(args: {
     );
   }
   return reasons.length === 0 ? null : reasons.join(' ');
+}
+
+function counted(count: number, one: string, many: string): string {
+  return `${formatCount(count)} ${count === 1 ? one : many}`;
+}
+
+/** The accessible name of the history graph: what it is, in a few facts. */
+export function historyGraphLabel(graph: HistoryGraph): string {
+  const commits = counted(graph.nodes.length, 'loaded commit', 'loaded commits');
+  const lanes = counted(graph.laneCount, 'lane', 'lanes');
+  const merges =
+    graph.merges === 0 ? '' : `, with ${counted(graph.merges, 'merge commit', 'merge commits')}`;
+  return `History graph of ${commits} on the default branch, newest first, drawn in ${lanes}${merges}. The Parents column of the table below lists the same links as text.`;
+}
+
+/**
+ * What the drawing cannot show, in words. Each line is a distinct state of the data; nothing here
+ * quotes GitHub. A graph with nothing unusual has no notes.
+ */
+export function historyGraphNotes(graph: HistoryGraph, next: PageNext | null): string[] {
+  const notes: string[] = [];
+
+  if (graph.openLinks > 0) {
+    const lines = counted(graph.openLinks, 'dashed line leads', 'dashed lines lead');
+    if (next?.kind === 'more') {
+      notes.push(
+        `${lines} to parent commits that are not loaded yet. They join up as older commits are loaded.`,
+      );
+    } else if (next?.kind === 'capped') {
+      notes.push(
+        `${lines} to parent commits beyond the loading limit, which cannot be loaded here.`,
+      );
+    } else {
+      notes.push(`${lines} to parent commits that are not among the loaded commits.`);
+    }
+  }
+  if (graph.droppedLinks > 0 || graph.overflowCommits > 0) {
+    const parts: string[] = [];
+    if (graph.droppedLinks > 0) {
+      parts.push(
+        `${counted(graph.droppedLinks, 'link is', 'links are')} not drawn because more than ${String(MAX_GRAPH_LANES)} lanes were needed`,
+      );
+    }
+    if (graph.overflowCommits > 0) {
+      parts.push(
+        `${counted(graph.overflowCommits, 'commit is', 'commits are')} in the extra column on the right because no lane was free`,
+      );
+    }
+    notes.push(`${parts.join(', and ')}. The Parents column still lists every link.`);
+  }
+  if (graph.unknownParents > 0) {
+    notes.push(
+      `GitHub did not say what the parents of ${counted(graph.unknownParents, 'commit', 'commits')} ${graph.unknownParents === 1 ? 'is' : 'are'}, so no line leaves ${graph.unknownParents === 1 ? 'it' : 'them'}.`,
+    );
+  }
+  if (graph.invalidParentLinks > 0) {
+    notes.push(
+      `${counted(graph.invalidParentLinks, 'parent entry', 'parent entries')} could not be read and ${graph.invalidParentLinks === 1 ? 'has' : 'have'} no line.`,
+    );
+  }
+  if (graph.outOfOrderLinks > 0) {
+    notes.push(
+      `${counted(graph.outOfOrderLinks, 'link leads', 'links lead')} to a commit listed above its child (commit dates can be out of order), so ${graph.outOfOrderLinks === 1 ? 'it is' : 'they are'} not drawn. The commit is marked with an up arrow.`,
+    );
+  }
+  if (graph.duplicates > 0) {
+    notes.push(
+      `${counted(graph.duplicates, 'commit is', 'commits are')} listed twice. The second copy is drawn without lines.`,
+    );
+  }
+  return notes;
 }
