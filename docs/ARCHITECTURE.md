@@ -320,8 +320,9 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
     only when asked ("Load older commits" / "Load more branches"); nothing loads in advance or is
     retried automatically. At the cap the view says GitHub has more that cannot be loaded here.
   - _What is kept:_ per commit the first line of the message, author name and login, the author
-    date (the committer date if it is missing or unreadable), the SHA and the parent count (more
-    than one is shown as a merge); per branch its name, protected flag and head SHA. Author **email
+    date (the committer date if it is missing or unreadable), the SHA and the parents' SHAs (more
+    than one is shown as a merge; a parent that cannot be read is kept as an unreadable entry,
+    not dropped, and no other parent field is kept); per branch its name, protected flag and head SHA. Author **email
     addresses and message bodies are dropped** by the shared schema, never held. Text is shown
     through the same sanitizer as file names (control, bidirectional and zero-width characters
     replaced, 200-character cap).
@@ -331,6 +332,29 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
     commits stay in the table, are counted and reported. The chart is an SVG drawn with attributes
     only (no inline `style`), with the table as its accessible equivalent. Dates are whatever the
     commit says (an author can set any date), so the timeline is not evidence of when work was done.
+  - _History graph:_ the parent links of the loaded commits, drawn above the table with no extra
+    request (it is laid out from the parent SHAs already in each commit). `buildHistoryGraph`
+    (`apps/web/src/activity/historyGraph.ts`) is one pass in GitHub's order, newest first. A lane
+    is a column waiting for one parent; when that commit's row arrives every line waiting for it
+    ends there. The first parent continues in the commit's lane and further parents of a merge join
+    a lane already waiting for them or take the lowest free one. It is `O(commits x lanes)`, has
+    no recursion (self-parents and cycles end), and rows already laid out never move when older
+    commits are appended: loading more only adds rows and joins open lines. At most **12 lanes**
+    are drawn; a link with no free lane is dropped and counted, and a commit with no lane at all
+    sits in one extra, hollow, grey column. Nothing is guessed: a root commit (no parents), a commit
+    whose parents GitHub did not state, an unreadable parent, a parent that is not loaded (a
+    dashed line to the bottom, explained differently while more can be loaded, at the 500 cap and
+    at the end), a parent listed above its child (GitHub's order is not guaranteed to put parents
+    below children, so this can happen: no line is drawn, the child gets a dashed blue outline and a
+    small up arrow, and the Parents column says "listed above"; a commit listed as its own parent
+    says "itself") and a repeated commit (drawn hollow, without lines, counted) are distinct states,
+    each with a shape or class and a sentence under the graph. Subjects are shown as text (cut
+    at 72 code points; the whole subject is in the tooltip). The drawing uses SVG attributes and
+    CSS classes only (no inline `style`), is one labelled image inside a keyboard-focusable
+    scrollable region, and the table's **Parents** column lists the same links as text. Each parent entry of an
+    examined commit has exactly one outcome in the layout (drawn, dropped for lack of a lane, listed
+    above, or unreadable); a repeated copy's entries are not examined. Only the
+    default branch's loaded commits are drawn: not other branches, pull requests or file changes.
   - _Partial data:_ each list is labelled **Complete** (the last page was reached and nothing was
     skipped), **Partial** (more exists, the cap was reached, or entries were unreadable and
     skipped and counted), **Partial, with an error** (a later page failed) or **Failed**. The count
@@ -413,9 +437,11 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
   large repository (a truncated tree, per-folder listings and their rate limits), an empty
   repository, a branch name containing `/`, an organization repository, submodules and symlinks
   (covered by mocked tests only).
-- **Activity view limits:** default branch only, at most 500 commits and 500 branches per view, no
-  commit graph, no merge or pull-request relationships, no per-commit detail. **Not verified live:**
-  the commit and branch endpoints, their permission requirements, paging, a repository with merges,
+- **Activity view limits:** default branch only, at most 500 commits and 500 branches per view, a history
+  graph of the loaded commits only (no other branches, no pull-request relationships, no zoom,
+  pan or export), no per-commit detail. **Not verified live:**
+  the commit and branch endpoints, their permission requirements, paging, a repository with merges
+  (and so the history graph, including whether real orderings put every parent below its child),
   one with more than 100 commits, one with many branches, an empty repository, an organization
   repository, and a default branch name containing `/` (mock-tested only).
 - No `404.html`/router fallback yet (decision pending: `HashRouter` vs. fallback, spike item 10).

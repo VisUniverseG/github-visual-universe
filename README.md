@@ -6,8 +6,8 @@ An open-source, personal GitHub intelligence platform for visually exploring rep
 > a local, read-only GitHub sign-in, a Repository Overview dashboard (statistics, a language
 > chart, search, filters and a detail panel) built from your real accessible repositories, and a
 > repository Architecture view (a file-tree treemap with folder navigation), and a per-repository
-> Activity view (recent commits on the default branch and its branches; mock-tested only). Deeper
-> visualizations (commit graphs, pull requests, issues, workflows) are **not implemented yet**, and
+> Activity view (recent commits on the default branch with a history graph, and its branches;
+> mock-tested only). Deeper visualizations (pull requests, issues, workflows) are **not implemented yet**, and
 > nothing is deployed.
 
 ## Vision

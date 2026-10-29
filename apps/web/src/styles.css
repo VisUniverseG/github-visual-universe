@@ -19,6 +19,14 @@
   --danger: #cf222e;
   --info: #0969da;
   --radius: 8px;
+
+  /* Lane colours of the history graph. Colour is never the only cue: the Parents column lists the same links. */
+  --graph-0: #0969da;
+  --graph-1: #bf3989;
+  --graph-2: #1a7f37;
+  --graph-3: #bc4c00;
+  --graph-4: #8250df;
+  --graph-5: #0a7d8c;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -35,6 +43,12 @@
     --warn: #d29922;
     --danger: #f85149;
     --info: #4493f8;
+    --graph-0: #4493f8;
+    --graph-1: #db61a2;
+    --graph-2: #3fb950;
+    --graph-3: #f0883e;
+    --graph-4: #ab7df8;
+    --graph-5: #39c5cf;
   }
 }
 
@@ -843,4 +857,141 @@ code {
 
 .activity-table .num {
   white-space: nowrap;
+}
+
+/* History graph: SVG presentation attributes and these classes only (the CSP forbids inline style). */
+
+.graph-scroll {
+  max-height: 28rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.graph-scroll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.graph-svg {
+  display: block;
+}
+
+.graph-lane-0 {
+  --lane: var(--graph-0);
+}
+
+.graph-lane-1 {
+  --lane: var(--graph-1);
+}
+
+.graph-lane-2 {
+  --lane: var(--graph-2);
+}
+
+.graph-lane-3 {
+  --lane: var(--graph-3);
+}
+
+.graph-lane-4 {
+  --lane: var(--graph-4);
+}
+
+.graph-lane-5 {
+  --lane: var(--graph-5);
+}
+
+.graph-lane-overflow {
+  --lane: var(--muted);
+}
+
+.graph-edge {
+  fill: none;
+  stroke: var(--lane);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.graph-edge-merged {
+  stroke-width: 1.5;
+}
+
+.graph-edge-open {
+  stroke-dasharray: 3 3;
+}
+
+.graph-end {
+  fill: var(--surface-2);
+  stroke: var(--lane);
+  stroke-width: 1.5;
+}
+
+.graph-node {
+  fill: var(--lane);
+  stroke: var(--surface-2);
+  stroke-width: 1.5;
+}
+
+.graph-node-hollow {
+  fill: var(--surface-2);
+  stroke: var(--lane);
+  stroke-width: 2;
+}
+
+.graph-node-invalid {
+  stroke: var(--danger);
+  stroke-width: 2.5;
+}
+
+.graph-node-hidden {
+  stroke: var(--warn);
+  stroke-width: 2.5;
+}
+
+.graph-node-above {
+  stroke: var(--info);
+  stroke-width: 2.5;
+  stroke-dasharray: 2 2;
+}
+
+.graph-above-mark {
+  fill: none;
+  stroke: var(--info);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.graph-label {
+  fill: var(--text);
+  font-size: 12px;
+}
+
+.graph-label-muted {
+  fill: var(--muted);
+}
+
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.graph-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.graph-notes {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  color: var(--muted);
+  font-size: 0.85rem;
 }

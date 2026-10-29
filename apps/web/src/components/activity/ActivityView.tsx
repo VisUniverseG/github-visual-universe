@@ -9,6 +9,7 @@ import {
   undatedMessage,
   type ActivityFailure,
 } from '../../activity/messages.ts';
+import { buildHistoryGraph } from '../../activity/historyGraph.ts';
 import { buildTimeline } from '../../activity/timeline.ts';
 import {
   statusOf,
@@ -23,6 +24,7 @@ import { HandoffButton } from '../HandoffButton.tsx';
 import { BranchTable } from './BranchTable.tsx';
 import { CommitTable } from './CommitTable.tsx';
 import { CommitTimeline } from './CommitTimeline.tsx';
+import { HistoryGraph } from './HistoryGraph.tsx';
 
 interface Props {
   readonly repo: RepositoryItem;
@@ -206,6 +208,7 @@ function CommitsSection({ repo, accessToken, onUnauthorized }: SectionProps) {
 
   const { items, loadedAt } = state;
   const timeline = useMemo(() => buildTimeline(items, loadedAt ?? 0), [items, loadedAt]);
+  const graph = useMemo(() => buildHistoryGraph(items), [items]);
   const status = statusOf(state);
   const isEmptyRepository = state.phase === 'failed' && state.error?.kind === 'empty';
   const partial = partialListMessage({ noun: 'commits', next: state.next, skipped: state.skipped });
@@ -285,7 +288,13 @@ function CommitsSection({ repo, accessToken, onUnauthorized }: SectionProps) {
               {timeline.unusable > 0 && timeline.plotted > 0 && (
                 <p className="note">{undatedMessage(timeline.unusable)}</p>
               )}
-              <CommitTable commits={items} now={loadedAt ?? 0} />
+              <h4 className="graph-heading">History graph</h4>
+              <p className="note">
+                How the loaded commits are connected: each line joins a commit to its parents, and a
+                merge has two. The Parents column of the table lists the same links as text.
+              </p>
+              <HistoryGraph graph={graph} commits={items} next={state.next} />
+              <CommitTable commits={items} graph={graph} now={loadedAt ?? 0} />
             </>
           )}
 

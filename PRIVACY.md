@@ -48,7 +48,7 @@ stored or sent to our server.
 browser reads, directly from GitHub and using your token, up to 500 of the latest commits on the
 repository's default branch and up to 500 of its branches. From each commit it keeps only the
 **first line of the message** (the subject), the **author's name and GitHub login**, the commit
-date, the commit's identifier and how many parents it has. From each branch it keeps the name,
+date, the commit's identifier and the identifiers of its parents (to draw the history graph). From each branch it keeps the name,
 whether it is protected, and the identifier of its latest commit. It **never reads or keeps author
 email addresses or the rest of a commit message**, and it does not read file contents. Commit
 subjects can contain anything their authors typed, and names and logins identify the people who
