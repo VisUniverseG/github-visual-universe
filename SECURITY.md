@@ -93,9 +93,11 @@ repository does not contain, so it **cannot be verified from the code** and has 
 with a live token. The code currently calls only user, installation, repository-list, branch,
 branch-list, commit-list, pull-request-list and git-tree endpoints. The commit-list, branch-list
 and pull-request-list endpoints, used by the Activity view, are mock-tested and have no recorded
-live evidence, including which permission GitHub requires for them (the pull-request list is
-expected to need Pull requests, read; the maintainer reports that permission is enabled and that
-the pull request list loaded in their own browser, which the repository cannot show). The code does not use the Issues or Actions permissions.
+live evidence. The maintainer reports (which the repository cannot show) that in their own browser
+the commit and branch requests returned HTTP 200, that the history graph rendered, and that the
+pull request list loaded with the Pull requests (read) permission enabled. Which permission
+GitHub requires for each of these endpoints has not been checked against a live token (the
+pull-request list is expected to need Pull requests, read). The code does not use the Issues or Actions permissions.
 
 ### Private repository access
 

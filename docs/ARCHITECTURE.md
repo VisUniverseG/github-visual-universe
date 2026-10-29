@@ -19,7 +19,7 @@ differ. `PRIVACY.md`, `SECURITY.md` and the Phase 0 assessment have been aligned
 | GitHub authorization spike harness | ✅ Prepared, offline-tested. Only the anonymous checks `ANON-01` to `ANON-03` have been run live; **no account-dependent check has**.                                                              |
 | GitHub App registration            | 🟡 Reported by the maintainer as created and installed, with credentials kept locally. Not verifiable from the repository.                                                                         |
 | Auth broker + sign-in (PKCE)       | ✅ Implemented and mock-tested. 🟡 Live use is **maintainer-reported only** (not reproducible from the repository); token revocation is not verified live. See [Known gaps](#known-gaps).          |
-| GitHub data layer (read-only)      | 🟡 Repository discovery, `GET /user`, branch head and file tree, commit, branch and pull request lists (mock-tested; the pull request list is also maintainer-reported working); the rest is later |
+| GitHub data layer (read-only)      | 🟡 Repository discovery, `GET /user`, branch head and file tree, commit, branch and pull request lists (mock-tested; all 3 lists are also maintainer-reported working locally); the rest is later. |
 | Visualizations                     | 🟡 Overview, language chart, file-tree architecture, a per-repository activity timeline, history graph and pull request list done; the rest (Phases 7–10)                                          |
 | Deployment (Pages + Render)        | ⏳ Planned (Phase 11)                                                                                                                                                                              |
 
@@ -315,8 +315,9 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
     `GET /repos/{owner}/{repo}/commits?per_page=100[&sha={default branch}]` and
     `GET /repos/{owner}/{repo}/branches?per_page=100`. Older pages are fetched by following
     GitHub's `Link: rel="next"` URL, which must be on `api.github.com`. **These two endpoints are
-    mock-tested only and have not been verified live**, including which permission GitHub requires
-    for them. No GraphQL, no per-commit requests, no file contents.
+    mock-tested, and have no recorded live evidence.** The maintainer reports a live run in their own
+    browser (see "Live verification status"); which permission GitHub requires for them has not been
+    checked against a live token. No GraphQL, no per-commit requests, no file contents.
   - _Limits:_ 100 items per page and at most **5 pages (500 items) per list**. Further pages load
     only when asked ("Load older commits" / "Load more branches"); nothing loads in advance or is
     retried automatically. At the cap the view says GitHub has more that cannot be loaded here.
@@ -387,15 +388,36 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
       focus to that commit's row in the table (it is not a URL fragment, which could disturb the
       sign-in address handling). Nothing else is compared: not branch names, titles, dates,
       abbreviated or near-miss SHAs (an abbreviated one is not even accepted as a SHA). GitHub
-      names a commit on the base branch for every way of merging (the merge commit, the single
-      squashed commit, or the last rebased commit), so all three link the same way; the list data
-      cannot tell a squash from a rebase, and the view does not claim to. Only a commit with two
-      or more parents is called a merge commit. A merge commit that is not loaded says **"Merge
+      documents the field as naming a commit on the base branch for every way of merging (see
+      "`merge_commit_sha`: documented versus verified" below), so the three methods link the same
+      way; the list data cannot tell a squash from a rebase, and the view does not claim to. Only a
+      commit with two or more parents is called a merge commit. A merge commit that is not loaded says **"Merge
       commit not loaded"**, with the reason: the commits are still loading or failed, older commits
       can be loaded above, the loading limit was reached, or it is not among the loaded commits of
       the default branch (the pull request may have been merged into another branch). For a PR
       that is not merged, GitHub's `merge_commit_sha` is a throwaway test merge, so it is dropped
       and never linked, and a merged PR without a stated SHA says so.
+    - _`merge_commit_sha`: documented versus verified._
+      - _Documented_ (GitHub REST API, "Get a pull request" on
+        [Pull requests](https://docs.github.com/en/rest/pulls/pulls), read 2026-10-29): before a
+        pull request is merged the field holds the SHA of a test merge commit, which is not added to
+        the base or head branch. After it is merged, the field is the SHA of the merge commit (merge
+        commit method), the SHA of the squashed commit on the base branch (squash), or "the commit
+        that the base branch was updated to" (rebase).
+      - _Limit of that documentation:_ the text is on the single-pull-request endpoint. In the page
+        as read, it is not repeated for the list endpoint this view uses
+        (`GET /repos/{owner}/{repo}/pulls`), so that the list gives the same values with the same
+        meaning is **an assumption** that the code relies on. The comment in the code that calls the
+        rebase value "the last of the rebased commits" is a paraphrase, not GitHub's wording.
+      - _Observed, once, outside the application:_ on 2026-10-29 a read-only call to the list
+        endpoint (GitHub CLI, not part of the tests, not recorded elsewhere) gave, for this
+        repository's eight merged pull requests (#1 to #8), a `merge_commit_sha` equal to a
+        two-parent commit on `main`, and for the open #9 a SHA that is not in `main`'s history. That
+        agrees with the documentation for the **merge commit method** and for the test merge. It is
+        a one-time observation that anyone with access can repeat; it is not a test.
+      - _Not verified live:_ the **squash** and **rebase** methods. No such pull request was seen,
+        so the squash and rebase handling is mock-tested against fixtures that assume the
+        documented meaning, and it has not been tested live.
     - _Failures:_ the list loads and fails independently of commits and branches. A 401 ends the
       session once, together with the other lists. A 403 says the GitHub App may be missing read
       access to Pull requests (or is not installed on the repository). A rate limit pauses further
@@ -406,15 +428,18 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
       in base ← head has a spoken equivalent; the state is always a word, the colour only backs it
       up; the link button's name says which commit it shows.
     - _Status:_ **mock-tested, and maintainer-reported working** in the maintainer's own browser
-      with the local app: the pull request list loaded, a merged pull request's commit button took
-      the reader to the matching commit row, and the row was focused, scrolled into view and
-      highlighted, as intended. That is a report, not recorded evidence: the repository cannot
-      reproduce it, and it does not say which repository, how many pages, which merge method, or
-      whether light and dark mode were both looked at. **No automated browser test exists.** Not
-      reported, so unverified live: paging beyond the first page, the 403, rate-limit and other
-      error states, a repository with many pull requests, forks (including deleted head
-      repositories), and `merge_commit_sha` for each of the merge, squash and rebase methods (it is
-      GitHub's documented meaning that the tests assume).
+      with the local app. First report: the pull request list loaded, a merged pull request's
+      commit button took the reader to the matching commit row, and the row was focused, scrolled
+      into view and highlighted, as intended. Second report (2026-10-29), from a screenshot the
+      maintainer holds and this repository does not: 9 pull requests loaded, #9 was shown as
+      Draft, merged pull requests showed their merge commit links, and the table layout was
+      readable. These are reports, not recorded evidence: the repository cannot reproduce them, and
+      they do not name the merge method or say whether light and dark mode were both looked at.
+      **No automated browser test exists.** Nine pull requests fit on one page, so paging beyond
+      the first page was not exercised. Not reported, so unverified live: paging beyond the first
+      page, the 403, rate-limit and other error states, a repository with many pull requests,
+      forks (including deleted head repositories), narrow screens, and `merge_commit_sha` for the
+      squash and rebase methods (see "`merge_commit_sha`: documented versus verified").
   - _Partial data:_ each list is labelled **Complete** (the last page was reached and nothing was
     skipped), **Partial** (more exists, the cap was reached, or entries were unreadable and
     skipped and counted), **Partial, with an error** (a later page failed) or **Failed**. The count
@@ -478,16 +503,26 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
     one small repository (see "Architecture view limits"). These are separate reports. **No evidence
     covers the whole flow (sign-in, then dashboard, then architecture view) as one verified live
     run.**
-  - _Maintainer-reported (Pull requests panel):_ the list loaded and the merged-pull-request
-    commit button, row focus, scrolling and highlight worked in the maintainer's own browser with
-    the local app. Details and what the report does not cover are under "Pull requests panel
-    limits".
+  - _Maintainer-reported (Activity view, 2026-10-29):_ in the maintainer's own browser the
+    connection was read-only and successful, the commit and branch requests returned HTTP 200,
+    small repositories loaded as **Complete**, commit subjects showed only their first line, merge
+    badges and the default-branch indicator worked, and a repository with more than 500 commits
+    showed the 500-commit cap, with no visible application error. Separately, the history graph
+    was looked at on two real repositories (10 and 17 loaded commits): it rendered, merge commits
+    and several lanes were visible, the Parents column was shown, and no obvious rendering
+    problem was noticed in the maintainer's screenshots. The screenshots are not in this
+    repository. See "Activity view limits" for what these reports do not cover.
+  - _Maintainer-reported (Pull requests panel):_ the list loaded, and the merged-pull-request
+    commit button, row focus, scrolling and highlight worked, in the maintainer's own browser with
+    the local app; a second report (2026-10-29) says 9 pull requests loaded with #9 shown as
+    Draft. Details and what the reports do not cover are under the Pull requests _Status_ above
+    and "Pull requests panel limits".
   - _Mock-tested only:_ every automated test uses mocks.
   - _Not verified live:_ the dashboard's extra repository fields (read from GitHub's documented
     response), `GET /user`, and token revocation. Account-dependent behaviour (user isolation,
     private-repository access, U1 to U11) is also unverified.
 - **Dashboard limits:** language is a repository count by primary language, not bytes. Pull
-  requests, issues and workflows have no views yet. The 30-page cap means an
+  requests are listed only in the Activity view; issues and workflows have no views yet. The 30-page cap means an
   account with more than about 3,000 accessible repositories shows partial statistics until
   "Load more" is used. The installation list itself is capped at 10 pages.
 - **Architecture view limits:** default branch only. For a repository over GitHub's tree limit only
@@ -503,17 +538,23 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
   (covered by mocked tests only).
 - **Activity view limits:** default branch only, at most 500 commits and 500 branches per view, a history
   graph of the loaded commits only (no other branches, no pull-request relationships beyond the
-  merge-commit links below, no zoom, pan or export), no per-commit detail.
+  merge-commit links below, no zoom, pan or export), no per-commit detail. **Mock-tested, and
+  maintainer-reported working in a local browser** for commits, branches and the history graph (no
+  recorded evidence, no automated browser test; see "Live verification status"). **Not verified
+  live:** which permission GitHub requires for the commit and branch endpoints (not checked
+  against a live token), an empty repository, an organization repository, a repository with many branches, a
+  default branch name containing `/`, and whether real orderings always put every parent below its
+  child (the graph was looked at on two small repositories). Paging is reported only as far as the
+  500-commit cap being shown.
 - **Pull requests panel limits:** the 500 most recently updated pull requests at most; a list, not a
   graph (no review, comment, file or check detail, no head-to-base network); a merged pull request
   is linked only to a commit that is loaded, so older merges (and merges into other branches) show
   "Merge commit not loaded"; squash and rebase merges are not told apart; no filters or search.
   **Mock-tested, and maintainer-reported working in a local browser** (no recorded evidence, no
   automated browser test; see the Pull requests _Status_ above for what was and was not reported).
-  **Not verified live:** the commit and branch endpoints, their permission requirements, paging, a repository with merges
-  (and so the history graph, including whether real orderings put every parent below its child),
-  one with more than 100 commits, one with many branches, an empty repository, an organization
-  repository, and a default branch name containing `/` (mock-tested only).
+  **Not verified live:** which permission GitHub requires for the pull request list, paging beyond
+  the first page, the 403 and rate-limit states, forks, and the squash and rebase methods
+  (mock-tested only).
 - No `404.html`/router fallback yet (decision pending: `HashRouter` vs. fallback, spike item 10).
   The auth callback paths depend on this decision.
 - No deploy workflows, `render.yaml`, Dependabot config, or issue/PR templates.
