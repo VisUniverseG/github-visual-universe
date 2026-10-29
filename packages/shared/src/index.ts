@@ -28,6 +28,7 @@ export {
   githubInstallationSchema,
   githubInstallationsResponseSchema,
   githubOwnerSchema,
+  githubPullRequestSchema,
   githubRepositorySchema,
   githubTreeEntrySchema,
   githubUserSchema,
@@ -36,6 +37,7 @@ export {
   parseCommitList,
   parseGitTree,
   parseInstallationRepositories,
+  parsePullRequestList,
 } from './github.js';
 export type {
   GitHubBranch,
@@ -45,10 +47,12 @@ export type {
   GitHubInstallation,
   GitHubInstallationRepositoriesResponse,
   GitHubInstallationsResponse,
+  GitHubPullRequest,
   GitHubRepository,
   GitHubTreeEntry,
   GitHubUser,
   ParsedBranchList,
   ParsedCommitList,
   ParsedGitTree,
+  ParsedPullRequestList,
 } from './github.js';

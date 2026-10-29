@@ -4,6 +4,7 @@ import {
   githubBranchSchema,
   githubCommitSchema,
   githubDefaultBranchSchema,
+  githubPullRequestSchema,
   githubRepositorySchema,
   githubTreeEntrySchema,
   githubUserSchema,
@@ -12,6 +13,7 @@ import {
   parseCommitList,
   parseGitTree,
   parseInstallationRepositories,
+  parsePullRequestList,
 } from './index.js';
 
 const base = {
@@ -466,5 +468,108 @@ describe('githubBranchListEntrySchema and parseBranchList', () => {
 
   it('rejects a response that is not a list', () => {
     expect(() => parseBranchList({ branches: [] })).toThrow();
+  });
+});
+
+describe('githubPullRequestSchema and parsePullRequestList', () => {
+  const pull = (over: Record<string, unknown> = {}) => ({
+    number: 7,
+    state: 'closed',
+    title: 'Add graph',
+    draft: false,
+    created_at: '2026-10-01T00:00:00Z',
+    updated_at: '2026-10-03T00:00:00Z',
+    closed_at: '2026-10-03T00:00:00Z',
+    merged_at: '2026-10-03T00:00:00Z',
+    merge_commit_sha: SHA,
+    head: { ref: 'feat/graph', sha: SHA, repo: { full_name: 'someone/fork' } },
+    base: { ref: 'main', sha: SHA },
+    user: { login: 'octocat', id: 1, email: 'private@example.test' },
+    body: 'A long body that must never be kept.',
+    ...over,
+  });
+
+  it('keeps only the fields the panel shows', () => {
+    const parsed = githubPullRequestSchema.parse(pull());
+    expect(parsed).toEqual({
+      number: 7,
+      state: 'closed',
+      title: 'Add graph',
+      draft: false,
+      created_at: '2026-10-01T00:00:00Z',
+      updated_at: '2026-10-03T00:00:00Z',
+      closed_at: '2026-10-03T00:00:00Z',
+      merged_at: '2026-10-03T00:00:00Z',
+      merge_commit_sha: SHA,
+      head: { ref: 'feat/graph' },
+      base: { ref: 'main' },
+      user: { login: 'octocat' },
+    });
+  });
+
+  it('reads a pull request whose head repository was deleted', () => {
+    const parsed = githubPullRequestSchema.parse(
+      pull({ head: { ref: 'feat/graph', sha: SHA, repo: null } }),
+    );
+    expect(parsed.head?.ref).toBe('feat/graph');
+  });
+
+  it('turns missing, null or malformed optional fields into absent values', () => {
+    const parsed = githubPullRequestSchema.parse(
+      pull({
+        title: 5,
+        draft: 'yes',
+        created_at: null,
+        updated_at: undefined,
+        closed_at: {},
+        merged_at: null,
+        merge_commit_sha: 'abc123',
+        head: null,
+        base: { ref: 42 },
+        user: null,
+      }),
+    );
+    expect(parsed.title).toBeUndefined();
+    expect(parsed.draft).toBeUndefined();
+    expect(parsed.created_at ?? null).toBeNull();
+    expect(parsed.updated_at).toBeUndefined();
+    expect(parsed.closed_at).toBeUndefined();
+    expect(parsed.merged_at ?? null).toBeNull();
+    expect(parsed.merge_commit_sha).toBeUndefined();
+    expect(parsed.head ?? null).toBeNull();
+    expect(parsed.base?.ref).toBeUndefined();
+    expect(parsed.user ?? null).toBeNull();
+  });
+
+  it('does not accept an abbreviated or upper-case merge sha', () => {
+    expect(
+      githubPullRequestSchema.parse(pull({ merge_commit_sha: SHA.slice(0, 7) })),
+    ).toMatchObject({ merge_commit_sha: undefined });
+    expect(
+      githubPullRequestSchema.parse(pull({ merge_commit_sha: SHA.toUpperCase() })),
+    ).toMatchObject({ merge_commit_sha: undefined });
+  });
+
+  it('skips and counts entries without a usable number or state, or that contradict themselves', () => {
+    const result = parsePullRequestList([
+      pull(),
+      pull({ number: 0 }),
+      pull({ number: 'seven' }),
+      pull({ number: undefined }),
+      pull({ state: 'merged' }),
+      pull({ state: undefined }),
+      // Open, yet merged: not trusted.
+      pull({ state: 'open', merged_at: '2026-10-03T00:00:00Z' }),
+      'nonsense',
+      null,
+      pull({ number: 8, state: 'open', merged_at: null, draft: true }),
+    ]);
+    expect(result.pulls.map((p) => p.number)).toEqual([7, 8]);
+    expect(result.skipped).toBe(8);
+  });
+
+  it('rejects a response that is not a list', () => {
+    expect(() => parsePullRequestList({ pulls: [] })).toThrow();
+    expect(() => parsePullRequestList(null)).toThrow();
   });
 });

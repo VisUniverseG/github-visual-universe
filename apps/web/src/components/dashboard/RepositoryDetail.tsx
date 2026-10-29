@@ -104,7 +104,8 @@ export function RepositoryDetail({ repo, onClose, onOpenArchitecture, onOpenActi
       )}
 
       <p className="note">
-        Pull requests, issues and more will have their own views in later phases.
+        Pull requests are in the activity view. Issues and more will have their own views in later
+        phases.
       </p>
     </aside>
   );

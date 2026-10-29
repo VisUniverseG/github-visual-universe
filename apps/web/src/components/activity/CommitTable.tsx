@@ -10,6 +10,17 @@ interface Props {
   readonly graph: HistoryGraph;
   /** The moment the commits were loaded: a date is only believed up to the end of tomorrow. */
   readonly now: number;
+  /** The commit a pull request took the reader to: its row is highlighted. At most one. */
+  readonly highlightSha?: string | null;
+}
+
+/**
+ * The id of a commit's row, so that a pull request can take the reader to it. A SHA is validated
+ * hex by the shared schema, so it is safe in an id. Only the first row of a commit listed twice
+ * has it.
+ */
+export function commitRowId(sha: string): string {
+  return `commit-row-${sha}`;
 }
 
 function authorText(commit: CommitItem): string {
@@ -65,8 +76,15 @@ function ParentsCell({
 }
 
 /** The accessible view of the loaded commits. Every cell is plain text from the repository. */
-export function CommitTable({ commits, graph, now }: Props) {
+export function CommitTable({ commits, graph, now, highlightSha = null }: Props) {
   const loaded = useMemo(() => new Set(commits.map((commit) => commit.sha)), [commits]);
+  const firstRows = useMemo(() => {
+    const first = new Map<string, number>();
+    commits.forEach((commit, index) => {
+      if (!first.has(commit.sha)) first.set(commit.sha, index);
+    });
+    return first;
+  }, [commits]);
   return (
     <table className="activity-table">
       <caption className="visually-hidden">Loaded commits, in the order GitHub listed them</caption>
@@ -86,7 +104,16 @@ export function CommitTable({ commits, graph, now }: Props) {
           // A commit pushed while older pages are being read can shift GitHub's paging, so the
           // same SHA may appear twice; the position keeps the rows apart.
           return (
-            <tr key={`${commit.sha}:${String(index)}`}>
+            <tr
+              key={`${commit.sha}:${String(index)}`}
+              {...(firstRows.get(commit.sha) === index
+                ? {
+                    id: commitRowId(commit.sha),
+                    tabIndex: -1,
+                    ...(commit.sha === highlightSha ? { className: 'commit-row-target' } : {}),
+                  }
+                : {})}
+            >
               <th scope="row" className="activity-subject">
                 {commit.subject === '' ? (
                   <span className="note">(no message)</span>
