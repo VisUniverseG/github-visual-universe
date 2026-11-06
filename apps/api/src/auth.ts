@@ -9,6 +9,12 @@ import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { AuthConfig } from './config.js';
+import {
+  FALLBACK_RATE_LIMIT_POLICIES,
+  type ClientIdentityResolver,
+  RATE_LIMIT_POLICIES,
+  RateLimiter,
+} from './rateLimit.js';
 
 // The stateless auth broker (ADR 0001).
 //
@@ -43,6 +49,9 @@ export interface AuthRoutesOptions {
   readonly fetchImpl: typeof fetch;
   readonly log: (reason: AuthLogReason) => void;
   readonly timeoutMs: number;
+  /** Defaults to null; forwarded headers are never trusted by the broker itself. */
+  readonly clientIdentity?: ClientIdentityResolver;
+  readonly now?: () => number;
 }
 
 const MAX_BODY_BYTES = 4 * 1024;
@@ -184,6 +193,17 @@ async function revokeToken(
 
 export function createAuthRoutes(options: AuthRoutesOptions): Hono {
   const routes = new Hono();
+  const tokenLimiter = new RateLimiter({
+    ...RATE_LIMIT_POLICIES.token,
+    fallbackLimit: FALLBACK_RATE_LIMIT_POLICIES.token.limit,
+    ...(options.now ? { now: options.now } : {}),
+  });
+  const revokeLimiter = new RateLimiter({
+    ...RATE_LIMIT_POLICIES.revoke,
+    fallbackLimit: FALLBACK_RATE_LIMIT_POLICIES.revoke.limit,
+    ...(options.now ? { now: options.now } : {}),
+  });
+  const clientIdentity = options.clientIdentity ?? (() => null);
 
   routes.use('*', async (c, next) => {
     // Requests without an allowed Origin never reach the handlers (preflights are answered
@@ -221,6 +241,11 @@ export function createAuthRoutes(options: AuthRoutesOptions): Hono {
       return c.json({ error: 'invalid_redirect_uri' satisfies AuthErrorCode }, 400);
     }
 
+    const decision = tokenLimiter.tryAcquire(clientIdentity(c));
+    if (!decision.allowed) {
+      c.header('Retry-After', String(decision.retryAfterSeconds));
+      return c.json({ error: 'rate_limited' satisfies AuthErrorCode }, 429);
+    }
     const result = await exchangeCode(options, options.auth, parsed.data);
     if (!result.ok) return c.json({ error: result.error }, result.status);
     return c.json(result.token);
@@ -239,6 +264,11 @@ export function createAuthRoutes(options: AuthRoutesOptions): Hono {
     const parsed = revokeRequestSchema.safeParse(raw);
     if (!parsed.success) return c.json({ error: 'invalid_request' satisfies AuthErrorCode }, 400);
 
+    const decision = revokeLimiter.tryAcquire(clientIdentity(c));
+    if (!decision.allowed) {
+      c.header('Retry-After', String(decision.retryAfterSeconds));
+      return c.json({ error: 'rate_limited' satisfies AuthErrorCode }, 429);
+    }
     // `revoked: true` is only ever sent when GitHub itself confirmed (HTTP 204).
     if (await revokeToken(options, options.auth, parsed.data.access_token)) {
       const body: RevokeResponse = { revoked: true };

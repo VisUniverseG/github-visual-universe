@@ -45,6 +45,7 @@ export const AUTH_ERROR_CODES = [
   'origin_not_allowed',
   'unsupported_media_type',
   'payload_too_large',
+  'rate_limited',
   'auth_not_configured',
   'upstream_error',
   'revocation_not_confirmed',
