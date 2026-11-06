@@ -28,7 +28,7 @@ function page(
   next: PageNext,
   extra: Partial<ActivityPage<string>> = {},
 ): ActivityPage<string> {
-  return { items, skipped: 0, next, rateLimit: null, ...extra };
+  return { items, skipped: 0, omitted: 0, next, rateLimit: null, ...extra };
 }
 
 type Load = (cursor: PageCursor | null, signal: AbortSignal) => Promise<ActivityPage<string>>;
@@ -62,6 +62,7 @@ describe('statusOf', () => {
     phase: 'ready',
     items: ['a'],
     skipped: 0,
+    omitted: 0,
     next: END,
     loadingMore: false,
     error: null,
@@ -142,6 +143,63 @@ describe('usePagedList', () => {
 
     expect(result.current.state.skipped).toBe(3);
     expect(statusOf(result.current.state)).toBe('partial');
+  });
+
+  it('adds up the entries left out on purpose, and does not make the list partial for them', async () => {
+    const loadPage = vi.fn<Load>((cursor) =>
+      Promise.resolve(
+        cursor === null ? page([], more(2), { omitted: 2 }) : page(['b'], END, { omitted: 3 }),
+      ),
+    );
+    const { result } = setup(loadPage);
+    await waitFor(() => {
+      expect(result.current.state.phase).toBe('ready');
+    });
+    expect(result.current.state.omitted).toBe(2);
+    // A page of only omitted entries is not an empty list while GitHub has more.
+    expect(result.current.state.items).toEqual([]);
+    expect(statusOf(result.current.state)).toBe('partial');
+
+    act(() => {
+      result.current.loadMore();
+    });
+    await waitFor(() => {
+      expect(result.current.state.next).toEqual(END);
+    });
+
+    expect(result.current.state.omitted).toBe(5);
+    expect(result.current.state.skipped).toBe(0);
+    expect(statusOf(result.current.state)).toBe('complete');
+  });
+
+  it('keeps the omitted count when a later page fails, and does not count a failed page', async () => {
+    let calls = 0;
+    const loadPage = vi.fn<Load>((cursor) => {
+      calls += 1;
+      if (cursor === null) return Promise.resolve(page(['a'], more(2), { omitted: 4 }));
+      return calls === 2
+        ? Promise.reject(new GitHubApiError('network'))
+        : Promise.resolve(page(['b'], END, { omitted: 1 }));
+    });
+    const { result } = setup(loadPage);
+    await waitFor(() => {
+      expect(result.current.state.phase).toBe('ready');
+    });
+    act(() => {
+      result.current.loadMore();
+    });
+    await waitFor(() => {
+      expect(result.current.state.error).not.toBeNull();
+    });
+    expect(result.current.state.omitted).toBe(4);
+
+    act(() => {
+      result.current.loadMore();
+    });
+    await waitFor(() => {
+      expect(result.current.state.next).toEqual(END);
+    });
+    expect(result.current.state.omitted).toBe(5);
   });
 
   it('does nothing when there is no further page, and does not load a page twice at once', async () => {

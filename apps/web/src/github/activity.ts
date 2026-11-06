@@ -46,6 +46,11 @@ export interface ActivityPage<T> {
   readonly items: readonly T[];
   /** Entries in GitHub's response that could not be read and were left out. */
   readonly skipped: number;
+  /**
+   * Entries in GitHub's response that were left out on purpose, so they are not an incompleteness:
+   * the pull requests in an issue list. Always 0 for the lists that have none.
+   */
+  readonly omitted: number;
   readonly next: PageNext;
   /** From this response; `null` when it carried no readable rate-limit headers. */
   readonly rateLimit: GitHubRateLimit | null;
@@ -126,10 +131,15 @@ export async function loadActivityPage<Raw, Item>(args: {
   readonly target: RepositoryRef;
   /** The query part of the first page's URL, after `?`. */
   readonly query: URLSearchParams;
-  readonly path: 'commits' | 'branches' | 'pulls';
+  readonly path: 'commits' | 'branches' | 'pulls' | 'issues';
   readonly cursor: PageCursor | null;
   readonly maxPages: number;
-  readonly parse: (json: unknown) => { readonly entries: readonly Raw[]; readonly skipped: number };
+  readonly parse: (json: unknown) => {
+    readonly entries: readonly Raw[];
+    readonly skipped: number;
+    /** Entries left out on purpose (not unreadable); 0 when omitted. */
+    readonly omitted?: number;
+  };
   readonly toItem: (entry: Raw) => Item;
   readonly signal?: AbortSignal | undefined;
 }): Promise<ActivityPage<Item>> {
@@ -158,6 +168,7 @@ export async function loadActivityPage<Raw, Item>(args: {
   return {
     items: result.data.entries.map(args.toItem),
     skipped: result.data.skipped,
+    omitted: result.data.omitted ?? 0,
     next,
     rateLimit: result.rateLimit,
   };

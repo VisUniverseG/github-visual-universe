@@ -4,6 +4,7 @@ import {
   githubBranchSchema,
   githubCommitSchema,
   githubDefaultBranchSchema,
+  githubIssueSchema,
   githubPullRequestSchema,
   githubRepositorySchema,
   githubTreeEntrySchema,
@@ -12,6 +13,7 @@ import {
   parseBranchList,
   parseCommitList,
   parseGitTree,
+  parseIssueList,
   parseInstallationRepositories,
   parsePullRequestList,
 } from './index.js';
@@ -571,5 +573,144 @@ describe('githubPullRequestSchema and parsePullRequestList', () => {
   it('rejects a response that is not a list', () => {
     expect(() => parsePullRequestList({ pulls: [] })).toThrow();
     expect(() => parsePullRequestList(null)).toThrow();
+  });
+});
+
+describe('GitHub issues', () => {
+  const issue = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    number: 12,
+    state: 'open',
+    title: 'Crash on start',
+    state_reason: null,
+    user: { login: 'octocat' },
+    labels: [{ name: 'bug', color: 'ff0000', id: 5 }, 'help wanted'],
+    comments: 3,
+    created_at: '2026-10-01T00:00:00Z',
+    updated_at: '2026-10-02T00:00:00Z',
+    closed_at: null,
+    body: 'SECRET BODY TEXT',
+    html_url: 'https://example.invalid/12',
+    ...over,
+  });
+
+  it('accepts a normal issue and drops everything it does not list, including the body', () => {
+    const parsed = githubIssueSchema.parse(issue());
+    expect(parsed.number).toBe(12);
+    expect(parsed.state).toBe('open');
+    expect(parsed.user?.login).toBe('octocat');
+    expect(parsed.comments).toBe(3);
+    expect(JSON.stringify(parsed)).not.toContain('SECRET BODY TEXT');
+    expect(JSON.stringify(parsed)).not.toContain('html_url');
+    expect(JSON.stringify(parsed)).not.toContain('ff0000');
+  });
+
+  it('requires a positive whole number and a supported state', () => {
+    for (const bad of [
+      { number: 0 },
+      { number: -1 },
+      { number: 1.5 },
+      { number: '7' },
+      { number: undefined },
+      { state: 'merged' },
+      { state: 'OPEN' },
+      { state: undefined },
+    ]) {
+      expect(githubIssueSchema.safeParse(issue(bad)).success).toBe(false);
+    }
+  });
+
+  it('keeps an issue whose optional fields are null, missing or the wrong type', () => {
+    const parsed = githubIssueSchema.parse(
+      issue({
+        title: null,
+        state_reason: 'something_new',
+        user: null,
+        labels: 'bug',
+        comments: -4,
+        created_at: 5,
+        updated_at: undefined,
+        closed_at: {},
+      }),
+    );
+    expect(parsed.title ?? null).toBeNull();
+    expect(parsed.state_reason).toBeUndefined();
+    expect(parsed.user ?? null).toBeNull();
+    expect(parsed.labels).toBeUndefined();
+    expect(parsed.comments).toBeUndefined();
+    expect(parsed.created_at).toBeUndefined();
+    expect(parsed.updated_at).toBeUndefined();
+    expect(parsed.closed_at).toBeUndefined();
+  });
+
+  it('accepts the documented state reasons', () => {
+    for (const reason of ['completed', 'reopened', 'not_planned', 'duplicate']) {
+      expect(
+        githubIssueSchema.parse(issue({ state: 'closed', state_reason: reason })),
+      ).toMatchObject({
+        state_reason: reason,
+      });
+    }
+  });
+
+  it('reads labels given as strings or objects, and tolerates bad label entries', () => {
+    const parsed = githubIssueSchema.parse(issue({ labels: ['a', { name: 'b' }, null, 7, {}] }));
+    expect(parsed.labels).toHaveLength(5);
+  });
+
+  it('lists issues and counts pull requests apart from unreadable entries', () => {
+    const result = parseIssueList([
+      issue({ number: 1 }),
+      issue({ number: 2, pull_request: { url: 'https://example.invalid/pr/2' } }),
+      issue({ number: 3, pull_request: {} }),
+      issue({ number: 4 }),
+    ]);
+    expect(result.issues.map((i) => i.number)).toEqual([1, 4]);
+    expect(result.omittedPullRequests).toBe(2);
+    expect(result.skipped).toBe(0);
+  });
+
+  it('treats a missing pull_request key as an issue, and an ambiguous one as unreadable', () => {
+    const result = parseIssueList([
+      issue({ number: 1 }),
+      issue({ number: 2, pull_request: null }),
+      issue({ number: 3, pull_request: 'yes' }),
+      issue({ number: 4, pull_request: true }),
+      issue({ number: 5, pull_request: [] }),
+      issue({ number: 6, pull_request: undefined }),
+    ]);
+    // `undefined` still counts as a present key: it is not trusted either way.
+    expect(result.issues.map((i) => i.number)).toEqual([1]);
+    expect(result.omittedPullRequests).toBe(0);
+    expect(result.skipped).toBe(5);
+  });
+
+  it('does not let an unreadable pull request marker be mistaken for an omitted pull request', () => {
+    const result = parseIssueList([issue({ pull_request: 'x' })]);
+    expect(result).toMatchObject({ issues: [], omittedPullRequests: 0, skipped: 1 });
+  });
+
+  it('skips non-object entries and entries without a usable number or state', () => {
+    const result = parseIssueList([
+      issue(),
+      'nonsense',
+      null,
+      42,
+      [],
+      issue({ number: 0 }),
+      issue({ state: 'merged' }),
+      issue({ number: 13, state: 'closed', state_reason: 'completed' }),
+    ]);
+    expect(result.issues.map((i) => i.number)).toEqual([12, 13]);
+    expect(result.skipped).toBe(6);
+  });
+
+  it('does not count a pull request that is also malformed as skipped', () => {
+    const result = parseIssueList([{ pull_request: {}, number: 'x', state: 'weird' }]);
+    expect(result).toMatchObject({ issues: [], omittedPullRequests: 1, skipped: 0 });
+  });
+
+  it('rejects a response that is not a list', () => {
+    expect(() => parseIssueList({ issues: [] })).toThrow();
+    expect(() => parseIssueList(null)).toThrow();
   });
 });

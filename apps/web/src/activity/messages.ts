@@ -2,6 +2,7 @@ import { REPOSITORY_MESSAGES, describeGitHubError } from '../dashboard/messages.
 import { GitHubApiError } from '../github/client.ts';
 import { MAX_BRANCH_PAGES, MAX_COMMIT_PAGES, ACTIVITY_PAGE_SIZE } from '../github/activity.ts';
 import type { PageNext } from '../github/activity.ts';
+import { ISSUE_PAGE_SIZE, MAX_ISSUE_PAGES } from '../github/issues.ts';
 import { MAX_PULL_PAGES, PULL_PAGE_SIZE } from '../github/pulls.ts';
 import type { NotLoadedReason } from './pullLinks.ts';
 import { formatCount } from '../dashboard/format.ts';
@@ -13,6 +14,9 @@ export const ACTIVITY_MESSAGES = {
   noCommits: 'GitHub listed no commits for this branch.',
   noBranches: 'GitHub listed no branches for this repository.',
   noPulls: 'GitHub listed no pull requests for this repository.',
+  noIssues: 'GitHub listed no issues for this repository.',
+  noIssuesYet: 'No issues were found among the entries loaded so far.',
+  issuesDisabled: 'Issues are turned off for this repository.',
   mergeNotStated: 'GitHub did not state the merge commit.',
   commitsForbidden:
     "GitHub refused access to this repository's commits. The GitHub App needs read access to Contents and must be installed on this repository.",
@@ -26,12 +30,16 @@ export const ACTIVITY_MESSAGES = {
     "GitHub refused access to this repository's pull requests. The GitHub App may be missing read access to Pull requests, or may not be installed on this repository.",
   pullsNotFound:
     'The pull request list could not be found. The GitHub App may not have access to this repository.',
+  issuesForbidden:
+    "GitHub refused access to this repository's issues. The GitHub App may be missing read access to Issues, or may not be installed on this repository.",
+  issuesNotFound:
+    'The issue list could not be found. The GitHub App may not have access to this repository.',
   unusable: "GitHub's answer could not be used, so nothing was loaded from it.",
   unauthorized: 'Your GitHub session has ended. Please sign in again.',
   noUsableDates: 'None of the loaded commits has a usable date, so there is no timeline to draw.',
 } as const;
 
-export type ActivityScope = 'commits' | 'branches' | 'pulls';
+export type ActivityScope = 'commits' | 'branches' | 'pulls' | 'issues';
 
 export type ActivityFailureKind =
   'empty' | 'forbidden' | 'not_found' | 'rate_limited' | 'network' | 'server' | 'unusable';
@@ -50,12 +58,14 @@ const FORBIDDEN_TEXT: Record<ActivityScope, string> = {
   commits: ACTIVITY_MESSAGES.commitsForbidden,
   branches: ACTIVITY_MESSAGES.branchesForbidden,
   pulls: ACTIVITY_MESSAGES.pullsForbidden,
+  issues: ACTIVITY_MESSAGES.issuesForbidden,
 };
 
 const NOT_FOUND_TEXT: Record<ActivityScope, string> = {
   commits: ACTIVITY_MESSAGES.commitsNotFound,
   branches: ACTIVITY_MESSAGES.branchesNotFound,
   pulls: ACTIVITY_MESSAGES.pullsNotFound,
+  issues: ACTIVITY_MESSAGES.issuesNotFound,
 };
 
 export function describeActivityFailure(
@@ -98,6 +108,16 @@ export function describeActivityFailure(
           resetAt: null,
         };
       }
+      // GitHub documents 410 Gone for issues of a repository that has them turned off. Whether it
+      // also answers the list with it is not documented, so it is handled here without relying on it.
+      if (status === 410 && scope === 'issues') {
+        return {
+          kind: 'empty',
+          text: ACTIVITY_MESSAGES.issuesDisabled,
+          retryable: false,
+          resetAt: null,
+        };
+      }
       // GitHub answers 409 to a commit list when the repository has no commits.
       if (status === 409 && scope === 'commits') {
         return {
@@ -131,13 +151,21 @@ export const describeBranchFailure = (error: unknown, now?: number): ActivityFai
 export const describePullFailure = (error: unknown, now?: number): ActivityFailure =>
   describeActivityFailure(error, 'pulls', now);
 
+export const describeIssueFailure = (error: unknown, now?: number): ActivityFailure =>
+  describeActivityFailure(error, 'issues', now);
+
 /** Shown while a rate limit blocks loading; the time is the reader's own. */
 export function describeBlockedUntil(resetAt: number): string {
   const time = new Date(resetAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   return `GitHub's rate limit is used up. More can be loaded again after ${time}.`;
 }
 
-const PLURALS = { commit: 'commits', branch: 'branches', 'pull request': 'pull requests' } as const;
+const PLURALS = {
+  commit: 'commits',
+  branch: 'branches',
+  'pull request': 'pull requests',
+  issue: 'issues',
+} as const;
 
 export function unreadableMessage(count: number, noun: keyof typeof PLURALS): string {
   const plural = PLURALS[noun];
@@ -150,7 +178,7 @@ export function undatedMessage(count: number): string {
 
 /** Why a list is not known to be everything GitHub has, or `null` when nothing is missing. */
 export function partialListMessage(args: {
-  readonly noun: 'commits' | 'branches' | 'pull requests';
+  readonly noun: 'commits' | 'branches' | 'pull requests' | 'issues';
   readonly next: PageNext | null;
   readonly skipped: number;
 }): string | null {
@@ -160,7 +188,9 @@ export function partialListMessage(args: {
       ? ACTIVITY_PAGE_SIZE * MAX_COMMIT_PAGES
       : noun === 'branches'
         ? ACTIVITY_PAGE_SIZE * MAX_BRANCH_PAGES
-        : PULL_PAGE_SIZE * MAX_PULL_PAGES,
+        : noun === 'pull requests'
+          ? PULL_PAGE_SIZE * MAX_PULL_PAGES
+          : ISSUE_PAGE_SIZE * MAX_ISSUE_PAGES,
   );
   const reasons: string[] = [];
   if (next?.kind === 'more') {
@@ -169,20 +199,43 @@ export function partialListMessage(args: {
         ? 'Older commits have not been loaded.'
         : noun === 'branches'
           ? 'More branches have not been loaded.'
-          : 'Older pull requests have not been loaded.',
+          : noun === 'pull requests'
+            ? 'Older pull requests have not been loaded.'
+            : 'Older issues have not been loaded.',
     );
   }
   if (next?.kind === 'capped') {
+    // GitHub lists pull requests among the issues, so the limit is on entries, not on issues.
     reasons.push(
-      `Loading stops at ${maxItems} ${noun}, and GitHub has more. The rest cannot be loaded here.`,
+      noun === 'issues'
+        ? `Loading stops after ${maxItems} entries from GitHub (issues and pull requests together), and GitHub has more. The rest cannot be loaded here.`
+        : `Loading stops at ${maxItems} ${noun}, and GitHub has more. The rest cannot be loaded here.`,
     );
   }
   if (skipped > 0) {
     reasons.push(
-      `${unreadableMessage(skipped, noun === 'commits' ? 'commit' : noun === 'branches' ? 'branch' : 'pull request')} The list is incomplete.`,
+      `${unreadableMessage(
+        skipped,
+        noun === 'commits'
+          ? 'commit'
+          : noun === 'branches'
+            ? 'branch'
+            : noun === 'pull requests'
+              ? 'pull request'
+              : 'issue',
+      )} The list is incomplete.`,
     );
   }
   return reasons.length === 0 ? null : reasons.join(' ');
+}
+
+/**
+ * What the issue list says about the pull requests GitHub listed with the issues and that were left
+ * out on purpose. It is information, not a warning: nothing is missing because of them.
+ */
+export function omittedPullRequestsMessage(omitted: number): string | null {
+  if (omitted === 0) return null;
+  return `${formatCount(omitted)} ${omitted === 1 ? 'pull request' : 'pull requests'} in GitHub's response ${omitted === 1 ? 'was' : 'were'} left out: GitHub lists pull requests together with issues, and they are shown in the Pull requests panel, not here.`;
 }
 
 function counted(count: number, one: string, many: string): string {
@@ -278,3 +331,7 @@ export function notLoadedText(reason: NotLoadedReason): string {
 /** The accessible name of the Pull requests table. */
 export const PULLS_TABLE_CAPTION =
   'Loaded pull requests, most recently updated first, as GitHub listed them';
+
+/** The accessible name of the Issues table. */
+export const ISSUES_TABLE_CAPTION =
+  'Loaded issues, most recently updated first, as GitHub listed them (pull requests left out)';

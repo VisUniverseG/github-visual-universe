@@ -27,7 +27,8 @@ no advertising. It is read-only: it can look at your GitHub data but never chang
 | Commit subjects, author names and logins, commit dates, branch names                                  | Fetched **directly from GitHub to your browser** when you open a repository's activity view. Kept in memory while that view is open                               | Our server is not involved, by design                                        |
 | Commit author email addresses, commit message bodies                                                  | **Never read by the app.** GitHub's response contains them, but the app discards them as it reads the response                                                    | Not applicable                                                               |
 | Pull request numbers, titles, states, dates, branch names, author logins and merge commit identifiers | Fetched **directly from GitHub to your browser** only when you press "Load pull requests" in a repository's activity view. Kept in memory while that view is open | Our server is not involved, by design                                        |
-| Issues, workflow runs, file contents                                                                  | **Not read by the app today**                                                                                                                                     | Not applicable                                                               |
+| Issue numbers, titles, states, dates, label names, author logins and comment counts                   | Fetched **directly from GitHub to your browser** only when you press "Load issues" in a repository's activity view. Kept in memory while that view is open        | Our server is not involved, by design                                        |
+| Workflow runs, file contents                                                                          | **Not read by the app today**                                                                                                                                     | Not applicable                                                               |
 | Cached GitHub responses                                                                               | Your browser's local storage (IndexedDB), per user _(planned; **no cache exists today**)_                                                                         | Only on your device; cleared on sign-out                                     |
 
 **Repository overview.** After you sign in, your browser asks GitHub which repositories the app is
@@ -71,6 +72,24 @@ names can contain anything their authors typed, and logins identify the people w
 pull requests, who may not be you. The same rules as for commits apply: kept in memory only while
 the view is open, dropped when you go back, never written to storage or sent to our server, and
 labelled **Partial** while more exists.
+
+**Issues in the activity view.** Nothing about issues is requested when the activity view opens.
+Only when you press **Load issues** does your browser read, directly from GitHub and using your
+token, the repository's most recently updated issues, one page of 100 at a time and only when you
+request each page; it stops after 500 entries. GitHub lists pull requests together with issues in this
+answer, so the 500 counts both; the pull requests among them are counted and left out, not shown.
+From each issue it keeps only the **number, title, whether it is open or closed and GitHub's stated
+reason, its created, updated and closed dates, the names of its labels (not their colours or
+descriptions), the author's GitHub login and the number of comments**. GitHub's response also
+contains each issue's **description (body)** and other fields, so the description **is transferred
+to your browser**, but the app discards it while reading the response: it is never kept, shown,
+stored or sent anywhere. It **never reads the comments themselves, assignees, milestones, reactions
+or e-mail addresses**, and it makes no request per issue. Titles, label names and logins can contain
+anything their authors typed, and logins identify people who may not be you. The same rules as for
+commits apply: kept in memory only while the view is open, dropped when you go back, never written
+to storage or sent to our server, and labelled **Partial** while more exists. The Issues view has
+been manually verified to load in a local browser. Automated tests cover parsing and UI behavior;
+broader live verification of pagination, error states, and responsive behavior remains limited.
 
 ## What the backend sees
 
@@ -132,11 +151,13 @@ What the code does today:
 
 - The web app sends only `GET` requests to `api.github.com`. It reads your login, the list of
   installations and their repositories, repository default branches, branch heads, file listings,
-  commit and branch lists, and, when you press "Load pull requests", the repository's pull request
-  list (see above). It does not yet use the issue or Actions permissions, so those are requested by
-  design but unused. The commit and branch lists rely on the Contents (read) permission and the
-  pull request list on the Pull requests (read) permission; which permission GitHub actually
-  requires for them has **not** been checked against a live token.
+  commit and branch lists, and, when you press "Load pull requests" or "Load issues", the
+  repository's pull request or issue list (see above). It does not yet use the Actions permission,
+  so that one is requested by design but unused. The commit and branch lists rely on the Contents
+  (read) permission, the pull request list on the Pull requests (read) permission and the issue list
+  on the Issues (read) permission; which permission GitHub actually requires for each has **not**
+  been checked against a live token (the maintainer states that Issues (read) is enabled on the
+  GitHub App; the repository cannot show this).
 - The code has no call that creates or edits issues, pull requests, repositories or any other
   GitHub data.
 - The only request that is not a read is made by the sign-in server when you sign out: it asks

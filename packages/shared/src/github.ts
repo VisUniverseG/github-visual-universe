@@ -324,3 +324,98 @@ export function parsePullRequestList(json: unknown): ParsedPullRequestList {
   }
   return { pulls, skipped };
 }
+
+// ---------------------------------------------------------------------------------------------
+// Issues.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * A label of an issue. GitHub documents the list as strings or objects, so both are read; only the
+ * name is kept (the colour, description and ids are stripped, and are never used). A label that
+ * is neither becomes absent without discarding the others.
+ */
+const issueLabelSchema = z
+  .union([z.string(), z.object({ name: lenient(z.string()) })])
+  .nullish()
+  .catch(undefined);
+
+/**
+ * One issue from `GET /repos/{owner}/{repo}/issues`. Only what the Issues panel shows is read: the
+ * number, title, state and its reason, the author's login, the label names, the comment count and
+ * three dates. **The body is never read**: unknown fields are stripped, so the description, the
+ * comments' text, the assignees, the milestone, e-mail addresses and every URL cannot reach the UI.
+ *
+ * `number` and `state` are required: without them a row would say nothing true, so such an entry
+ * is skipped and counted instead. Everything else is optional and becomes absent when missing or
+ * malformed. `user` is `null` for a deleted account.
+ *
+ * This schema describes an issue only. That GitHub also lists pull requests here is handled by
+ * {@link parseIssueList}, before this schema is applied.
+ */
+export const githubIssueSchema = z.object({
+  number: z.number().int().positive(),
+  state: z.enum(['open', 'closed']),
+  title: lenient(z.string()),
+  state_reason: lenient(z.enum(['completed', 'reopened', 'not_planned', 'duplicate'])),
+  user: lenient(z.object({ login: lenient(z.string()) })),
+  labels: lenient(z.array(issueLabelSchema)),
+  comments: lenient(z.number().int().nonnegative()),
+  created_at: lenient(z.string()),
+  updated_at: lenient(z.string()),
+  closed_at: lenient(z.string()),
+});
+export type GitHubIssue = z.infer<typeof githubIssueSchema>;
+
+export interface ParsedIssueList {
+  readonly issues: GitHubIssue[];
+  /** Pull requests in the response, left out on purpose. They are not unreadable entries. */
+  readonly omittedPullRequests: number;
+  /** Entries that could not be read and were left out. Callers must surface this. */
+  readonly skipped: number;
+}
+
+type IssueEntryKind = 'issue' | 'pull_request' | 'unreadable';
+
+/**
+ * Looks at the raw entry, before any schema: GitHub's Issues endpoint lists pull requests too, and
+ * marks them with a `pull_request` key.
+ *
+ * - no such key: an issue;
+ * - the key holds an object: a pull request;
+ * - the key is there but holds anything else (`null`, a string, a list...): it is not clear what
+ *   the entry is, so it is not guessed at and counts as unreadable;
+ * - the entry is not an object at all: unreadable.
+ */
+function classifyIssueEntry(raw: unknown): IssueEntryKind {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return 'unreadable';
+  if (!Object.prototype.hasOwnProperty.call(raw, 'pull_request')) return 'issue';
+  const marker = (raw as Record<string, unknown>)['pull_request'];
+  return typeof marker === 'object' && marker !== null && !Array.isArray(marker)
+    ? 'pull_request'
+    : 'unreadable';
+}
+
+/**
+ * Parses an issue list one entry at a time, telling issues from pull requests first. Pull requests
+ * are counted in `omittedPullRequests` and never read further, so a pull request that is otherwise
+ * malformed is still only a pull request. Throws if the response is not a list at all.
+ */
+export function parseIssueList(json: unknown): ParsedIssueList {
+  const entries = listEnvelopeSchema.parse(json);
+  const issues: GitHubIssue[] = [];
+  let omittedPullRequests = 0;
+  let skipped = 0;
+  for (const raw of entries) {
+    const kind = classifyIssueEntry(raw);
+    if (kind === 'pull_request') {
+      omittedPullRequests += 1;
+    } else if (kind === 'unreadable') {
+      skipped += 1;
+    } else {
+      const parsed = githubIssueSchema.safeParse(raw);
+      if (parsed.success) issues.push(parsed.data);
+      else skipped += 1;
+    }
+  }
+  return { issues, omittedPullRequests, skipped };
+}

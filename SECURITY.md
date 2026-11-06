@@ -91,13 +91,15 @@ installation, so any change is a deliberate, reviewed decision.
 This is the **intended** permission set. It lives in the GitHub App registration, which this
 repository does not contain, so it **cannot be verified from the code** and has not been checked
 with a live token. The code currently calls only user, installation, repository-list, branch,
-branch-list, commit-list, pull-request-list and git-tree endpoints. The commit-list, branch-list
-and pull-request-list endpoints, used by the Activity view, are mock-tested and have no recorded
-live evidence. The maintainer reports (which the repository cannot show) that in their own browser
+branch-list, commit-list, pull-request-list, issue-list and git-tree endpoints. The commit-list,
+branch-list, pull-request-list and issue-list endpoints, used by the Activity view, are
+mock-tested. The Issues view has been manually verified to load in a local browser. Detailed live
+verification of permission failures, rate limits, and other error states remains limited. The maintainer reports (which the repository cannot show) that, in their own browser,
 the commit and branch requests returned HTTP 200, that the history graph rendered, and that the
-pull request list loaded with the Pull requests (read) permission enabled. Which permission
-GitHub requires for each of these endpoints has not been checked against a live token (the
-pull-request list is expected to need Pull requests, read). The code does not use the Issues or Actions permissions.
+pull request list loaded with the Pull requests (read) permission enabled. The expected
+permissions are Pull requests (read) for the pull-request list and Issues (read) for the issue list;
+neither requirement has been verified against a live token. The maintainer states that Issues (read)
+is enabled, which the repository cannot show. The code does not use the Actions permission.
 
 ### Private repository access
 
@@ -246,8 +248,10 @@ user's token**
   for the activity view: commit subjects, author names and logins and branch names are untrusted,
   shown as plain text (control, bidirectional and zero-width characters replaced, length capped),
   and never used to build a URL, except that the default branch name is sent as an encoded `sha`
-  query parameter. Pull request titles, branch names and author logins are treated the same way. Author email addresses and message bodies are dropped when the response is
-  parsed, and nothing from a response is echoed into an error message _(implemented;
+  query parameter. Pull request titles, branch names and author logins, and issue titles, label names and author
+  logins, are treated the same way (label colours from GitHub are never used). Author email
+  addresses, commit message bodies and issue and pull request descriptions are dropped when the
+  response is parsed, and nothing from a response is echoed into an error message _(implemented;
   mock-tested)_.
 - Per-user cache keys; the cache is cleared on sign-out _(planned)_. **No cache exists today**: the
   only data the app persists is the `sessionStorage` token and temporary sign-in state.

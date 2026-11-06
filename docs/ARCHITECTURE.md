@@ -8,20 +8,20 @@ differ. `PRIVACY.md`, `SECURITY.md` and the Phase 0 assessment have been aligned
 
 ## Status
 
-| Component                          | Status                                                                                                                                                                                             |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| npm workspaces monorepo            | ✅ Implemented                                                                                                                                                                                     |
-| `packages/shared` (contracts)      | ✅ `/health`, auth-broker and GitHub response schemas (Zod, lenient optional fields)                                                                                                               |
-| `apps/api` (Hono)                  | ✅ `GET /health`, `POST /auth/token`, `POST /auth/revoke`                                                                                                                                          |
-| `apps/web` (React + Vite)          | ✅ Sign-in (PKCE), Overview dashboard, Architecture view, Activity view, Disconnect; build-time CSP                                                                                                |
-| CI checks                          | ✅ Implemented (not yet run on GitHub)                                                                                                                                                             |
-| Authentication design              | ✅ Decided (ADR 0001, amended after Phase 2)                                                                                                                                                       |
-| GitHub authorization spike harness | ✅ Prepared, offline-tested. Only the anonymous checks `ANON-01` to `ANON-03` have been run live; **no account-dependent check has**.                                                              |
-| GitHub App registration            | 🟡 Reported by the maintainer as created and installed, with credentials kept locally. Not verifiable from the repository.                                                                         |
-| Auth broker + sign-in (PKCE)       | ✅ Implemented and mock-tested. 🟡 Live use is **maintainer-reported only** (not reproducible from the repository); token revocation is not verified live. See [Known gaps](#known-gaps).          |
-| GitHub data layer (read-only)      | 🟡 Repository discovery, `GET /user`, branch head and file tree, commit, branch and pull request lists (mock-tested; all 3 lists are also maintainer-reported working locally); the rest is later. |
-| Visualizations                     | 🟡 Overview, language chart, file-tree architecture, a per-repository activity timeline, history graph and pull request list done; the rest (Phases 7–10)                                          |
-| Deployment (Pages + Render)        | ⏳ Planned (Phase 11)                                                                                                                                                                              |
+| Component                          | Status                                                                                                                                                                                                                 |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| npm workspaces monorepo            | ✅ Implemented                                                                                                                                                                                                         |
+| `packages/shared` (contracts)      | ✅ `/health`, auth-broker and GitHub response schemas (Zod, lenient optional fields)                                                                                                                                   |
+| `apps/api` (Hono)                  | ✅ `GET /health`, `POST /auth/token`, `POST /auth/revoke`                                                                                                                                                              |
+| `apps/web` (React + Vite)          | ✅ Sign-in (PKCE), Overview dashboard, Architecture view, Activity view, Disconnect; build-time CSP                                                                                                                    |
+| CI checks                          | ✅ Implemented (not yet run on GitHub)                                                                                                                                                                                 |
+| Authentication design              | ✅ Decided (ADR 0001, amended after Phase 2)                                                                                                                                                                           |
+| GitHub authorization spike harness | ✅ Prepared, offline-tested. Only the anonymous checks `ANON-01` to `ANON-03` have been run live; **no account-dependent check has**.                                                                                  |
+| GitHub App registration            | 🟡 Reported by the maintainer as created and installed, with credentials kept locally. Not verifiable from the repository.                                                                                             |
+| Auth broker + sign-in (PKCE)       | ✅ Implemented and mock-tested. 🟡 Live use is **maintainer-reported only** (not reproducible from the repository); token revocation is not verified live. See [Known gaps](#known-gaps).                              |
+| GitHub data layer (read-only)      | 🟡 Repository discovery, `GET /user`, branch head and file tree, commit, branch, pull request and issue lists (mock-tested; commits, branches, and PRs also reported working locally); remaining features are planned. |
+| Visualizations                     | 🟡 Overview, language chart, file-tree architecture, a per-repository activity timeline, history graph, pull request and issue lists done; the rest (Phases 7–10)                                                      |
+| Deployment (Pages + Render)        | ⏳ Planned (Phase 11)                                                                                                                                                                                                  |
 
 ## Repository layout
 
@@ -306,7 +306,7 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
     view is open and is dropped when you go back. There is no cache.
 - **Activity view.** The detail panel's "View activity" button, next to "View architecture", opens a
   read-only view of one repository's recent commits on its **default branch**, its branches and,
-  on request, its pull requests.
+  on request, its pull requests and issues.
   The dashboard keeps its state (it is hidden, not unmounted) and one view is open at a time
   (`{ kind: 'architecture' | 'activity'; repoId }`). It needs no backend change and no new
   permission, dependency or storage: the browser calls `api.github.com` through the same `githubGet`
@@ -440,6 +440,58 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
       page, the 403, rate-limit and other error states, a repository with many pull requests,
       forks (including deleted head repositories), narrow screens, and `merge_commit_sha` for the
       squash and rebase methods (see "`merge_commit_sha`: documented versus verified").
+  - _Issues (read-only, on request):_ a fourth panel on the Activity page, between Pull requests
+    and Branches, built exactly like the Pull requests panel. **Nothing about issues is requested
+    when the page opens**: the panel is a "Load issues" button, and the list (with its own paging,
+    failure and rate-limit handling) exists only after it is pressed.
+    - _Request:_ `GET /repos/{owner}/{repo}/issues?state=all&sort=updated&direction=desc&per_page=100`
+      through the same `githubGet` wrapper (GET only) and the same paging code
+      (`loadActivityPage`, `usePagedList`). All four query parameters are sent because GitHub's
+      defaults are `state=open` and `per_page=30`. Later pages are fetched only when asked ("Load
+      older issues") by following GitHub's `Link: rel="next"` URL, at most **5 pages (500 entries)**;
+      nothing loads in advance, nothing is retried or polled, and there is **no request per issue**
+      (comments are never read). No GraphQL, no new permission, dependency, endpoint or storage.
+    - _Pull requests are left out:_ GitHub lists pull requests in this answer too. The shared
+      parser (`parseIssueList`) inspects each **raw entry** before any schema is applied: an object
+      without a `pull_request` key is an issue; an object whose `pull_request` is an object is a
+      pull request, which is **counted and not shown** (`omittedPullRequests`, carried through the
+      paging code as `omitted` and added up across pages); a `pull_request` that is anything else,
+      or an entry that is not an object, is **unreadable and counted as skipped**, never guessed.
+      Omitted entries do not make the list Partial, so an issue list can still be Complete. They
+      are said aloud in a note that points to the Pull requests panel. Because pull requests share
+      the answer, **the 500-entry cap limits the entries examined, not the issues found**, and the
+      cap message says so. A page that held only pull requests is not Empty while GitHub offers
+      more: it is Partial, with "No issues were found among the entries loaded so far."
+    - _What is kept:_ per issue its number, title, state (open or closed) and GitHub's stated
+      reason, the created, updated and closed dates, the label names (strings or `name` of objects;
+      at most five per row, the rest counted as "+N more"; colours and descriptions are dropped),
+      the author's login and the comment count. **The body is transferred by GitHub but discarded
+      by the shared schema**; assignees, milestone, reactions, URLs and e-mail addresses are dropped
+      too. No URL is built from anything in a response. An entry without a positive whole number or
+      a state of `open` or `closed` is skipped and counted, and the list says it is incomplete.
+      Missing author, title, labels, comment count or dates are shown as absent ("Unknown", "(no
+      title)", "not stated", "date unknown"), never as zero or an invented value. Text goes through
+      the same sanitizer as commits and is rendered as plain text; labels are plain text chips with
+      no colour from GitHub and there is no inline `style`.
+    - _Failures:_ the list loads and fails independently of the other lists. A 401 ends the session
+      once, together with the other lists. A 403 says the GitHub App may be missing read access to
+      Issues (or is not installed on the repository). A 404 says the list could not be found. A
+      **410** is shown as **Empty** with "Issues are turned off for this repository."; GitHub
+      documents 410 for issues on a repository that has them disabled, but whether the _list_
+      endpoint returns it was not confirmed, so this is a defensive reading. A rate limit pauses
+      further requests until GitHub's reset time and offers no retry. A failed later page keeps the
+      loaded rows and retries the same page. Messages are fixed strings.
+    - _Accessibility:_ one table with a caption, column headers and a row header per row; the state
+      is always a word (with the reason in words), the colour only backs it up; the heading takes
+      focus when the button has been pressed.
+    - _Status:_ **Automated mock-based tests pass, and the Issues view has been manually verified to
+      load in a local browser.** The assumptions behind it are GitHub's documented behaviour, read
+      2026-10-29 ([List repository issues](https://docs.github.com/en/rest/issues/issues)):
+      `pull_request` marks pull requests, labels may be strings or objects, `user` may be null.
+      **Not comprehensively verified live:** pull-request exclusion against real responses, paging
+      beyond the first page, the five-page/500-entry cap, 403, 404 and 410 responses, rate-limit
+      behaviour, later-page failure and retry, how many pull requests share a real repository's
+      answer, and narrow-viewport or light/dark theme layout.
   - _Partial data:_ each list is labelled **Complete** (the last page was reached and nothing was
     skipped), **Partial** (more exists, the cap was reached, or entries were unreadable and
     skipped and counted), **Partial, with an error** (a later page failed) or **Failed**. The count
@@ -517,12 +569,16 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
     the local app; a second report (2026-10-29) says 9 pull requests loaded with #9 shown as
     Draft. Details and what the reports do not cover are under the Pull requests _Status_ above
     and "Pull requests panel limits".
+  - _Issues panel:_ automated mock-based tests pass, and the view has been manually verified to
+    load in a local browser. Comprehensive live verification of pull-request exclusion, pagination,
+    the five-page/500-entry cap, error and rate-limit states, later-page retry, and responsive and
+    theme behavior remains outstanding. See the Issues _Status_ above and "Issues panel limits".
   - _Mock-tested only:_ every automated test uses mocks.
   - _Not verified live:_ the dashboard's extra repository fields (read from GitHub's documented
     response), `GET /user`, and token revocation. Account-dependent behaviour (user isolation,
     private-repository access, U1 to U11) is also unverified.
 - **Dashboard limits:** language is a repository count by primary language, not bytes. Pull
-  requests are listed only in the Activity view; issues and workflows have no views yet. The 30-page cap means an
+  requests and issues are listed only in the Activity view; workflows have no view yet. The 30-page cap means an
   account with more than about 3,000 accessible repositories shows partial statistics until
   "Load more" is used. The installation list itself is capped at 10 pages.
 - **Architecture view limits:** default branch only. For a repository over GitHub's tree limit only
@@ -555,6 +611,12 @@ Because the risk cannot be removed, preventing script injection is mandatory (se
   **Not verified live:** which permission GitHub requires for the pull request list, paging beyond
   the first page, the 403 and rate-limit states, forks, and the squash and rebase methods
   (mock-tested only).
+- **Issues panel limits:** at most 500 entries examined, issues and pull requests together, so a
+  repository with many pull requests can show fewer than 500 issues and be labelled Partial; a
+  list, not a graph (no comments, assignees, milestones, reactions, filters or search); label
+  colours are not shown; no link to an issue on GitHub. **Automated mock-based tests pass, and the
+  view has been manually verified to load in a local browser. Not comprehensively verified live:**
+  see the Issues _Status_ above.
 - No `404.html`/router fallback yet (decision pending: `HashRouter` vs. fallback, spike item 10).
   The auth callback paths depend on this decision.
 - No deploy workflows, `render.yaml`, Dependabot config, or issue/PR templates.
