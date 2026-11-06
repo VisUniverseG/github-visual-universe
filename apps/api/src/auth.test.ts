@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Context } from 'hono';
 import { createApp } from './app.js';
 import type { AuthLogReason } from './auth.js';
 import type { AuthConfig } from './config.js';
@@ -38,7 +39,12 @@ function githubOk(extra: Record<string, unknown> = {}): Response {
 }
 
 function setup(
-  options: { auth?: AuthConfig | null; github?: () => Response | Promise<Response> } = {},
+  options: {
+    auth?: AuthConfig | null;
+    github?: () => Response | Promise<Response>;
+    clientIdentity?: (context: Context) => string | null;
+    now?: () => number;
+  } = {},
 ) {
   const logs: AuthLogReason[] = [];
   const fetchImpl: FetchMock = vi.fn<typeof fetch>(() =>
@@ -50,9 +56,13 @@ function setup(
     auth: options.auth === undefined ? auth : options.auth,
     fetchImpl,
     log: (reason) => logs.push(reason),
+    ...(options.clientIdentity ? { clientIdentity: options.clientIdentity } : {}),
+    ...(options.now ? { now: options.now } : {}),
   });
   return { app, fetchImpl, logs };
 }
+
+const revokeBody = { access_token: ACCESS_TOKEN };
 
 function post(
   app: ReturnType<typeof createApp>,
@@ -119,6 +129,82 @@ describe('POST /auth/token: success', () => {
     expect(text).not.toContain('refresh');
     expect(text).not.toContain('scope');
     expect(text).not.toContain(SECRET);
+  });
+
+  describe('POST /auth/token: rate limiting', () => {
+    it('limits valid upstream attempts, returns Retry-After, and does not contact GitHub', async () => {
+      let now = 1_000_000;
+      const { app, fetchImpl } = setup({
+        now: () => now,
+        github: () => githubOk(),
+        clientIdentity: () => 'client-a',
+      });
+
+      for (let count = 0; count < 10; count += 1) {
+        expect((await post(app, '/auth/token', validBody)).status).toBe(200);
+      }
+      const res = await post(app, '/auth/token', validBody);
+      expect(res.status).toBe(429);
+      expect(res.headers.get('retry-after')).toBe('600');
+      expect(await res.json()).toEqual({ error: 'rate_limited' });
+      expect(fetchImpl).toHaveBeenCalledTimes(10);
+
+      now += 10 * 60 * 1000;
+      expect((await post(app, '/auth/token', validBody)).status).toBe(200);
+    });
+
+    it('keeps trusted identities and the fallback bucket separate', async () => {
+      const { app } = setup({
+        clientIdentity: (context) => context.req.header('x-test-client') ?? null,
+      });
+
+      for (let count = 0; count < 10; count += 1) {
+        expect(
+          (await post(app, '/auth/token', validBody, { 'x-test-client': 'client-a' })).status,
+        ).toBe(200);
+      }
+      expect(
+        (await post(app, '/auth/token', validBody, { 'x-test-client': 'client-b' })).status,
+      ).toBe(200);
+      expect((await post(app, '/auth/token', validBody)).status).toBe(200);
+    });
+
+    it('does not let invalid requests consume the upstream allowance', async () => {
+      const { app, fetchImpl } = setup({ clientIdentity: () => 'client-a' });
+
+      expect((await post(app, '/auth/token', { ...validBody, code: 'bad code' })).status).toBe(400);
+      for (let count = 0; count < 10; count += 1) {
+        expect((await post(app, '/auth/token', validBody)).status).toBe(200);
+      }
+      expect(fetchImpl).toHaveBeenCalledTimes(10);
+    });
+
+    it('ignores forwarded headers when no trusted identity resolver is configured', async () => {
+      const { app } = setup();
+      const headers = { 'X-Forwarded-For': '198.51.100.10' };
+
+      for (let count = 0; count < 60; count += 1) {
+        expect((await post(app, '/auth/token', validBody, headers)).status).toBe(200);
+      }
+      expect(
+        (await post(app, '/auth/token', validBody, { 'X-Forwarded-For': '203.0.113.20' })).status,
+      ).toBe(429);
+    });
+  });
+
+  describe('POST /auth/revoke: rate limiting', () => {
+    it('uses an independent allowance from token exchange', async () => {
+      const { app, fetchImpl } = setup({
+        github: () => new Response(null, { status: 204 }),
+        clientIdentity: () => 'client-a',
+      });
+
+      for (let count = 0; count < 20; count += 1) {
+        expect((await post(app, '/auth/revoke', revokeBody)).status).toBe(200);
+      }
+      expect((await post(app, '/auth/revoke', revokeBody)).status).toBe(429);
+      expect(fetchImpl).toHaveBeenCalledTimes(20);
+    });
   });
 });
 

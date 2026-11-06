@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { createAuthRoutes, type AuthLogReason } from './auth.js';
+import type { ClientIdentityResolver } from './rateLimit.js';
 import type { AuthConfig } from './config.js';
 
 export interface AppOptions {
@@ -15,6 +16,9 @@ export interface AppOptions {
   /** Receives fixed reason strings only. Never request or response content. */
   readonly log?: (reason: AuthLogReason) => void;
   readonly upstreamTimeoutMs?: number;
+  /** Optional trusted deployment adapter. No forwarded header is trusted by default. */
+  readonly clientIdentity?: ClientIdentityResolver;
+  readonly now?: () => number;
 }
 
 export function createApp(options: AppOptions): Hono {
@@ -57,6 +61,8 @@ export function createApp(options: AppOptions): Hono {
       fetchImpl: options.fetchImpl ?? fetch,
       log: options.log ?? ((reason) => console.warn(`[auth] ${reason}`)),
       timeoutMs: options.upstreamTimeoutMs ?? 10_000,
+      ...(options.clientIdentity ? { clientIdentity: options.clientIdentity } : {}),
+      ...(options.now ? { now: options.now } : {}),
     }),
   );
 
