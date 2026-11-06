@@ -23,6 +23,7 @@ import { BranchTable } from './BranchTable.tsx';
 import { CommitTable, commitRowId } from './CommitTable.tsx';
 import { CommitTimeline } from './CommitTimeline.tsx';
 import { HistoryGraph } from './HistoryGraph.tsx';
+import { IssuesSection } from './IssuesSection.tsx';
 import { FirstPageFailure, MoreControls, StatusChip, noun } from './ListParts.tsx';
 import { PullRequestsSection } from './PullRequestsSection.tsx';
 
@@ -71,8 +72,9 @@ export function ActivityView({ repo, accessToken, onUnauthorized, onBack }: Prop
 
       <p className="note">
         Read-only. Your browser reads commit subjects (the first line of each message), author names
-        and dates, and branch names directly from GitHub, and keeps them in memory only while this
-        view is open. File contents are never read.
+        and dates, and branch names directly from GitHub and, only when you ask for them, pull
+        requests and issues, and keeps them in memory only while this view is open. File contents
+        are never read.
       </p>
 
       {ended ? (
@@ -133,6 +135,7 @@ function ActivityBody({ repo, accessToken, onUnauthorized }: SectionProps) {
         commits={commitIndex}
         onShowCommit={showCommit}
       />
+      <IssuesSection repo={repo} accessToken={accessToken} onUnauthorized={onUnauthorized} />
       <BranchesSection repo={repo} accessToken={accessToken} onUnauthorized={onUnauthorized} />
     </>
   );

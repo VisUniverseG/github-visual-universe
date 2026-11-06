@@ -17,6 +17,11 @@ export interface PagedListState<T> {
   readonly items: readonly T[];
   /** Entries GitHub sent that could not be read, over every page so far. */
   readonly skipped: number;
+  /**
+   * Entries GitHub sent that were left out on purpose (the pull requests of an issue list), over
+   * every page so far. Unlike `skipped` they never make a list partial.
+   */
+  readonly omitted: number;
   /** `null` until the first page has arrived. */
   readonly next: PageNext | null;
   /** A later page is on its way. */
@@ -50,6 +55,7 @@ const LOADING: PagedListState<never> = {
   phase: 'loading',
   items: [],
   skipped: 0,
+  omitted: 0,
   next: null,
   loadingMore: false,
   error: null,
@@ -137,6 +143,7 @@ export function usePagedList<T>({ loadPage, describe, onUnauthorized }: PagedLis
           phase: 'ready',
           items: page.items,
           skipped: page.skipped,
+          omitted: page.omitted,
           next: page.next,
           loadingMore: false,
           error: null,
@@ -221,6 +228,7 @@ export function usePagedList<T>({ loadPage, describe, onUnauthorized }: PagedLis
           ...current,
           items: [...current.items, ...page.items],
           skipped: current.skipped + page.skipped,
+          omitted: current.omitted + page.omitted,
           next: page.next,
           loadingMore: false,
           error: null,
