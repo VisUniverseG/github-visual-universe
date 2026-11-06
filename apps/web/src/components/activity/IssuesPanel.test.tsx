@@ -321,7 +321,9 @@ describe('Issues panel: rows', () => {
 
     const table = within(panel()).getByRole('table', { name: /Loaded issues/ });
     expect(
-      within(panel()).getByRole('region', { name: 'Scrollable issues table' }).getAttribute('tabindex'),
+      within(panel())
+        .getByRole('region', { name: 'Scrollable issues table' })
+        .getAttribute('tabindex'),
     ).toBe('0');
     expect(
       within(table)

@@ -8,20 +8,20 @@ differ. `PRIVACY.md`, `SECURITY.md` and the Phase 0 assessment have been aligned
 
 ## Status
 
-| Component                          | Status                                                                                                                                                                                             |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| npm workspaces monorepo            | ✅ Implemented                                                                                                                                                                                     |
-| `packages/shared` (contracts)      | ✅ `/health`, auth-broker and GitHub response schemas (Zod, lenient optional fields)                                                                                                               |
-| `apps/api` (Hono)                  | ✅ `GET /health`, `POST /auth/token`, `POST /auth/revoke`                                                                                                                                          |
-| `apps/web` (React + Vite)          | ✅ Sign-in (PKCE), Overview dashboard, Architecture view, Activity view, Disconnect; build-time CSP                                                                                                |
-| CI checks                          | ✅ Implemented (not yet run on GitHub)                                                                                                                                                             |
-| Authentication design              | ✅ Decided (ADR 0001, amended after Phase 2)                                                                                                                                                       |
-| GitHub authorization spike harness | ✅ Prepared, offline-tested. Only the anonymous checks `ANON-01` to `ANON-03` have been run live; **no account-dependent check has**.                                                              |
-| GitHub App registration            | 🟡 Reported by the maintainer as created and installed, with credentials kept locally. Not verifiable from the repository.                                                                         |
-| Auth broker + sign-in (PKCE)       | ✅ Implemented and mock-tested. 🟡 Live use is **maintainer-reported only** (not reproducible from the repository); token revocation is not verified live. See [Known gaps](#known-gaps).          |
+| Component                          | Status                                                                                                                                                                                                                 |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| npm workspaces monorepo            | ✅ Implemented                                                                                                                                                                                                         |
+| `packages/shared` (contracts)      | ✅ `/health`, auth-broker and GitHub response schemas (Zod, lenient optional fields)                                                                                                                                   |
+| `apps/api` (Hono)                  | ✅ `GET /health`, `POST /auth/token`, `POST /auth/revoke`                                                                                                                                                              |
+| `apps/web` (React + Vite)          | ✅ Sign-in (PKCE), Overview dashboard, Architecture view, Activity view, Disconnect; build-time CSP                                                                                                                    |
+| CI checks                          | ✅ Implemented (not yet run on GitHub)                                                                                                                                                                                 |
+| Authentication design              | ✅ Decided (ADR 0001, amended after Phase 2)                                                                                                                                                                           |
+| GitHub authorization spike harness | ✅ Prepared, offline-tested. Only the anonymous checks `ANON-01` to `ANON-03` have been run live; **no account-dependent check has**.                                                                                  |
+| GitHub App registration            | 🟡 Reported by the maintainer as created and installed, with credentials kept locally. Not verifiable from the repository.                                                                                             |
+| Auth broker + sign-in (PKCE)       | ✅ Implemented and mock-tested. 🟡 Live use is **maintainer-reported only** (not reproducible from the repository); token revocation is not verified live. See [Known gaps](#known-gaps).                              |
 | GitHub data layer (read-only)      | 🟡 Repository discovery, `GET /user`, branch head and file tree, commit, branch, pull request and issue lists (mock-tested; commits, branches, and PRs also reported working locally); remaining features are planned. |
-| Visualizations                     | 🟡 Overview, language chart, file-tree architecture, a per-repository activity timeline, history graph, pull request and issue lists done; the rest (Phases 7–10)                                  |
-| Deployment (Pages + Render)        | ⏳ Planned (Phase 11)                                                                                                                                                                              |
+| Visualizations                     | 🟡 Overview, language chart, file-tree architecture, a per-repository activity timeline, history graph, pull request and issue lists done; the rest (Phases 7–10)                                                      |
+| Deployment (Pages + Render)        | ⏳ Planned (Phase 11)                                                                                                                                                                                                  |
 
 ## Repository layout
 
